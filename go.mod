@@ -1,4 +1,4 @@
-module github.com/clementherve/raudio
+module github.com/clementherve/godio
 
 go 1.25
 

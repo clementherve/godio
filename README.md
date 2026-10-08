@@ -1,4 +1,4 @@
-# raudio
+# godio
 
 Enregistre une réunion sous Windows, la transcrit **localement**, en extrait
 l'essentiel avec Claude Code, et ajoute le résultat à votre note du jour Obsidian.
@@ -26,22 +26,22 @@ whisper.cpp. Seul le texte transcrit est transmis à Claude Code.
 
 ```powershell
 # 1. Compiler (depuis Windows, avec w64devkit ou mingw-w64 installé)
-go build -o raudio.exe ./cmd/raudio
+go build -o godio.exe ./cmd/godio
 
-# 2. Télécharger whisper.cpp et les modèles, à côté de raudio.exe
+# 2. Télécharger whisper.cpp et les modèles, à côté de godio.exe
 .\scripts\fetch-deps.ps1          # ajoutez -Cuda si vous avez un GPU NVIDIA
 
 # 3. Créer la configuration, puis renseigner le chemin du coffre
-.\raudio.exe config
+.\godio.exe config
 
 # 4. Vérifier que tout est en place
-.\raudio.exe doctor
+.\godio.exe doctor
 ```
 
 ## Utilisation
 
 ```powershell
-.\raudio.exe run
+.\godio.exe run
 ```
 
 L'icône apparaît dans la zone de notification :
@@ -69,13 +69,13 @@ fichiers intermédiaires sont conservés, donc on peut retravailler le prompt
 d'extraction sans réenregistrer quoi que ce soit.
 
 ```powershell
-.\raudio.exe devices              # lister les périphériques
-.\raudio.exe doctor               # diagnostiquer la configuration
-.\raudio.exe record -s 30         # enregistrer 30 s, avec vu-mètres
-.\raudio.exe transcribe           # transcrire la dernière session
-.\raudio.exe extract              # régénérer les notes via Claude
-.\raudio.exe write                # ajouter à la note du jour
-.\raudio.exe process              # les trois d'un coup
+.\godio.exe devices              # lister les périphériques
+.\godio.exe doctor               # diagnostiquer la configuration
+.\godio.exe record -s 30         # enregistrer 30 s, avec vu-mètres
+.\godio.exe transcribe           # transcrire la dernière session
+.\godio.exe extract              # régénérer les notes via Claude
+.\godio.exe write                # ajouter à la note du jour
+.\godio.exe process              # les trois d'un coup
 ```
 
 Sans argument, ces commandes agissent sur la session la plus récente ; on peut
@@ -85,8 +85,8 @@ aussi passer un chemin de session.
 
 | Chemin | Contenu |
 |---|---|
-| `%APPDATA%\raudio\config.toml` | configuration |
-| `%LOCALAPPDATA%\raudio\sessions\<date>\` | une session |
+| `%APPDATA%\godio\config.toml` | configuration |
+| `%LOCALAPPDATA%\godio\sessions\<date>\` | une session |
 | └ `me.wav`, `them.wav` | les deux pistes, 16 kHz mono |
 | └ `me.json`, `them.json` | sortie brute de whisper.cpp |
 | └ `transcript.txt` | transcription fusionnée et étiquetée |
@@ -112,7 +112,7 @@ Dans `config.toml` :
 
 Enregistrer une conversation sans prévenir les participants est, dans l'Union
 européenne, un problème juridique et pas seulement une question de politesse.
-raudio ne s'enregistre jamais tout seul : il faut une action explicite à chaque
+godio ne s'enregistre jamais tout seul : il faut une action explicite à chaque
 réunion. Prévenez les participants.
 
 ## Développement
@@ -125,3 +125,10 @@ go run ./scripts/genicons     # régénérer les icônes de la zone de notificat
 `devices`, le format WAV, la fusion des transcriptions, l'analyse de la sortie
 whisper et l'écriture Obsidian sont couverts par des tests et ne dépendent pas
 de Windows. La capture loopback, elle, ne peut être vérifiée que sous Windows.
+
+### Intégration continue
+
+`.github/workflows/ci.yml` compile et teste sous Windows (les runners GitHub
+fournissent mingw-w64, nécessaire à cgo) et publie `godio.exe` en artefact.
+Le binaire est lié statiquement : la CI échoue s'il se met à dépendre des DLL
+de mingw. Un tag `v*` attache l'archive à la release correspondante.

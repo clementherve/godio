@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/clementherve/raudio/internal/claudecli"
-	"github.com/clementherve/raudio/internal/tray"
+	"github.com/clementherve/godio/internal/claudecli"
+	"github.com/clementherve/godio/internal/tray"
 )
 
 // cmdRun starts the tray application.
@@ -19,7 +19,7 @@ func cmdRun() error {
 	// or a missing whisper binary is cheap to fix beforehand and infuriating
 	// to discover afterwards.
 	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("%w\n\nLancez « raudio doctor » pour le détail", err)
+		return fmt.Errorf("%w\n\nLancez « godio doctor » pour le détail", err)
 	}
 	if err := (claudecli.Runner{Executable: cfg.Claude.Executable}).Check(); err != nil {
 		fmt.Fprintln(os.Stderr, "attention :", err)

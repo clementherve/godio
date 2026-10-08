@@ -141,7 +141,7 @@ func TestAppendCreatesFileAndIsAtomic(t *testing.T) {
 	// The temp file used for the atomic rename must not be left behind.
 	ents, _ := os.ReadDir(filepath.Dir(path))
 	for _, e := range ents {
-		if strings.HasPrefix(e.Name(), ".raudio-") {
+		if strings.HasPrefix(e.Name(), ".godio-") {
 			t.Errorf("temp file left behind: %s", e.Name())
 		}
 	}

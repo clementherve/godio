@@ -1,4 +1,4 @@
-// Command raudio records a meeting, transcribes it locally, has Claude extract
+// Command godio records a meeting, transcribes it locally, has Claude extract
 // what matters, and appends the result to an Obsidian daily note.
 package main
 
@@ -8,27 +8,36 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"time"
 
-	"github.com/clementherve/raudio/internal/audio"
-	"github.com/clementherve/raudio/internal/claudecli"
-	"github.com/clementherve/raudio/internal/config"
-	"github.com/clementherve/raudio/internal/pipeline"
+	"github.com/clementherve/godio/internal/audio"
+	"github.com/clementherve/godio/internal/claudecli"
+	"github.com/clementherve/godio/internal/config"
+	"github.com/clementherve/godio/internal/pipeline"
 )
 
-const usage = `raudio — notes de réunion automatiques
+// version is stamped at build time by the CI workflow:
+//
+//	go build -ldflags "-X main.version=<tag>"
+//
+// A local `go build` leaves it as "dev".
+var version = "dev"
+
+const usage = `godio — notes de réunion automatiques
 
 Usage:
-  raudio run                  lance l'application (icône de notification)
-  raudio devices              liste les périphériques audio
-  raudio doctor               vérifie la configuration et les dépendances
-  raudio record [-s N]        enregistre (N secondes, ou Ctrl+C)
-  raudio transcribe [session] transcrit les deux pistes
-  raudio extract [session]    génère les notes via Claude
-  raudio write [session]      ajoute les notes à la note du jour
-  raudio process [session]    transcribe + extract + write
-  raudio config               affiche le chemin et le contenu de la config
+  godio run                  lance l'application (icône de notification)
+  godio devices              liste les périphériques audio
+  godio doctor               vérifie la configuration et les dépendances
+  godio record [-s N]        enregistre (N secondes, ou Ctrl+C)
+  godio transcribe [session] transcrit les deux pistes
+  godio extract [session]    génère les notes via Claude
+  godio write [session]      ajoute les notes à la note du jour
+  godio process [session]    transcribe + extract + write
+  godio config               affiche le chemin et le contenu de la config
+  godio version              affiche la version
 
 [session] est un dossier de session ; par défaut, le plus récent.
 `
@@ -60,6 +69,9 @@ func run(cmd string, args []string) error {
 		return cmdStage(cmd, args)
 	case "config":
 		return cmdConfig()
+	case "version", "--version", "-v":
+		fmt.Printf("godio %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		return nil
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return nil
@@ -262,7 +274,7 @@ loop:
 		fmt.Printf("  %-5s %6.1f s  %s\n", t, tr.Seconds, tr.Path)
 	}
 	fmt.Printf("\nSession : %s\n", sess.Dir)
-	fmt.Printf("Suite   : raudio process %s\n", sess.Dir)
+	fmt.Printf("Suite   : godio process %s\n", sess.Dir)
 	return nil
 }
 

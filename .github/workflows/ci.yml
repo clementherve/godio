@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # godio captures audio through malgo, which compiles miniaudio via cgo.
+  # The Windows runners ship mingw-w64 on PATH at C:\mingw64\bin, so no
+  # toolchain setup step is needed — but cgo must be switched on explicitly,
+  # since it defaults to off when cross-compilation settings are present.
+  CGO_ENABLED: 1
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Show toolchain
+        run: |
+          go version
+          gcc --version
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Check generated icons are up to date
+        shell: bash
+        run: |
+          go run ./scripts/genicons
+          if ! git diff --exit-code -- internal/assets/icons; then
+            echo "Tray icons differ from scripts/genicons output."
+            echo "Run 'go run ./scripts/genicons' and commit the result."
+            exit 1
+          fi
+
+      - name: Check PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./scripts/fetch-deps.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        shell: bash
+        # -extldflags=-static links the mingw runtime in, so the result does not
+        # need libgcc/libwinpthread beside it. The DLL check below proves it.
+        run: |
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.version.outputs.value }} -extldflags=-static" \
+            -o godio.exe ./cmd/godio
+
+      - name: Verify the binary is self-contained
+        shell: bash
+        # A static build should import only system DLLs. If libgcc_s or
+        # libwinpthread appear here, the exe needs those files shipped with it.
+        run: |
+          ./godio.exe version
+          echo "--- imported DLLs:"
+          objdump -p godio.exe | grep "DLL Name:" | sort -u
+          if objdump -p godio.exe | grep -Eiq "DLL Name:.*(libgcc|libwinpthread|libstdc)"; then
+            echo "::error::Binary depends on mingw runtime DLLs; static linking did not take effect."
+            exit 1
+          fi
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/godio | Out-Null
+          Copy-Item godio.exe, README.md dist/godio/
+          New-Item -ItemType Directory -Force dist/godio/scripts | Out-Null
+          Copy-Item scripts/fetch-deps.ps1 dist/godio/scripts/
+          Compress-Archive -Path dist/godio/* -DestinationPath dist/godio-windows-amd64.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: godio-windows-amd64
+          path: dist/godio-windows-amd64.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach to release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: godio-windows-amd64
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            godio-windows-amd64.zip \
+          || gh release upload "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber godio-windows-amd64.zip

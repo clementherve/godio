@@ -1,4 +1,4 @@
-// Command genicons draws raudio's tray icons.
+// Command genicons draws godio's tray icons.
 //
 // The icons are generated rather than hand-drawn so the five states stay
 // visually consistent: one mic glyph, one status dot, same geometry throughout.

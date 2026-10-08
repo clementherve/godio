@@ -2,3 +2,7 @@
 /raudio.exe
 /whisper/
 /models/
+/dist/
+
+# macOS
+.DS_Store

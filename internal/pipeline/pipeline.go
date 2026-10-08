@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clementherve/raudio/internal/assets"
-	"github.com/clementherve/raudio/internal/audio"
-	"github.com/clementherve/raudio/internal/claudecli"
-	"github.com/clementherve/raudio/internal/config"
-	"github.com/clementherve/raudio/internal/obsidian"
-	"github.com/clementherve/raudio/internal/transcript"
-	"github.com/clementherve/raudio/internal/whisper"
+	"github.com/clementherve/godio/internal/assets"
+	"github.com/clementherve/godio/internal/audio"
+	"github.com/clementherve/godio/internal/claudecli"
+	"github.com/clementherve/godio/internal/config"
+	"github.com/clementherve/godio/internal/obsidian"
+	"github.com/clementherve/godio/internal/transcript"
+	"github.com/clementherve/godio/internal/whisper"
 )
 
 // Pipeline runs the stages after recording: transcribe, extract, write.

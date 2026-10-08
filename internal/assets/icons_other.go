@@ -4,7 +4,7 @@ package assets
 
 import _ "embed"
 
-// Non-Windows tray backends take PNG. raudio targets Windows, but keeping these
+// Non-Windows tray backends take PNG. godio targets Windows, but keeping these
 // building means the tray can be exercised during development on another OS.
 
 //go:embed icons/idle.png

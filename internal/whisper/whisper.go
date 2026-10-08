@@ -1,6 +1,6 @@
 // Package whisper drives the whisper.cpp command-line binary and parses its
 // JSON output. Shelling out to the official prebuilt binary avoids cgo bindings
-// entirely and lets the CPU/CUDA build be swapped without recompiling raudio.
+// entirely and lets the CPU/CUDA build be swapped without recompiling godio.
 package whisper
 
 import (
@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clementherve/raudio/internal/transcript"
+	"github.com/clementherve/godio/internal/transcript"
 )
 
 // Runner invokes whisper-cli with a fixed model and language.

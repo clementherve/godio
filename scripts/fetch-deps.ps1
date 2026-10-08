@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Downloads raudio's runtime dependencies: the whisper.cpp binary and its models.
+    Downloads godio's runtime dependencies: the whisper.cpp binary and its models.
 
 .DESCRIPTION
-    Places everything beside raudio.exe:
+    Places everything beside godio.exe:
 
         whisper\whisper-cli.exe   (+ its DLLs)
         models\ggml-<model>.bin
@@ -43,7 +43,7 @@ function Get-WhisperAsset {
     # v1.x.y semver tags carry release notes but NO assets, so resolving
     # "latest" by version number silently finds nothing to download.
     $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=20' `
-        -Headers @{ 'User-Agent' = 'raudio' }
+        -Headers @{ 'User-Agent' = 'godio' }
 
     $pattern = if ($WantCuda) { '^whisper-bin-win-cuda-.*-x64\.zip$' } else { '^whisper-bin-x64\.zip$' }
 
@@ -105,7 +105,7 @@ Get-Model -Label 'ggml-silero-v5.1.2' `
 
 Write-Host ''
 Write-Host 'Done. Next:'
-Write-Host '  .\raudio.exe doctor'
+Write-Host '  .\godio.exe doctor'
 if ($Model -ne 'large-v3-turbo') {
     Write-Host ''
     Write-Host "Set whisper.model = `"models/ggml-$Model.bin`" in config.toml."

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/clementherve/raudio/internal/audio"
+	"github.com/clementherve/godio/internal/audio"
 )
 
 // Meta is the session.json written beside a recording.

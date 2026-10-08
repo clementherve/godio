@@ -36,7 +36,7 @@ func Append(path, heading string, e Entry) error {
 
 	// Write via a temp file in the same directory, then rename, so a crash or a
 	// full disk can never leave a half-written note where a good one used to be.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".raudio-*.md")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".godio-*.md")
 	if err != nil {
 		return fmt.Errorf("creating temp note: %w", err)
 	}

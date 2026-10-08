@@ -1,4 +1,4 @@
-// Package config loads and scaffolds raudio's on-disk configuration.
+// Package config loads and scaffolds godio's on-disk configuration.
 package config
 
 import (
@@ -103,7 +103,7 @@ func Path() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "raudio", "config.toml"), nil
+	return filepath.Join(dir, "godio", "config.toml"), nil
 }
 
 // SessionsDir returns the directory holding per-recording session folders.
@@ -112,7 +112,7 @@ func SessionsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "raudio", "sessions"), nil
+	return filepath.Join(dir, "godio", "sessions"), nil
 }
 
 // Load reads config.toml, writing a default one first if it does not exist.
@@ -211,7 +211,7 @@ func (c *Config) Validate() error {
 }
 
 // Resolve turns a possibly-relative asset path into an absolute one, anchored
-// at the executable's directory so raudio works regardless of working directory.
+// at the executable's directory so godio works regardless of working directory.
 func (c *Config) Resolve(path string) string {
 	if path == "" || filepath.IsAbs(path) {
 		return path

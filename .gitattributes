@@ -1,0 +1,8 @@
+# Keep LF in the repository. Without this, the Windows runner checks Go files
+# out with CRLF and `gofmt -l` flags every file in the tree.
+* text=auto eol=lf
+
+*.ps1 text eol=crlf
+
+*.png binary
+*.ico binary

@@ -1,4 +1,4 @@
-// Package tray is raudio's system-tray application.
+// Package tray is godio's system-tray application.
 package tray
 
 import (
@@ -12,10 +12,10 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/clementherve/raudio/internal/assets"
-	"github.com/clementherve/raudio/internal/audio"
-	"github.com/clementherve/raudio/internal/config"
-	"github.com/clementherve/raudio/internal/pipeline"
+	"github.com/clementherve/godio/internal/assets"
+	"github.com/clementherve/godio/internal/audio"
+	"github.com/clementherve/godio/internal/config"
+	"github.com/clementherve/godio/internal/pipeline"
 )
 
 // App holds the tray's state.
@@ -53,7 +53,7 @@ func Run(cfg config.Config) error {
 
 func (a *App) onReady() {
 	a.setIcon(assets.IconIdle)
-	systray.SetTooltip("raudio — prêt")
+	systray.SetTooltip("godio — prêt")
 
 	a.mToggle = systray.AddMenuItem("Démarrer l'enregistrement", "")
 	a.mStatus = systray.AddMenuItem("Prêt", "")
@@ -316,7 +316,7 @@ func (a *App) finish(err error) {
 func (a *App) fail(err error) {
 	a.setIcon(assets.IconError)
 	a.mStatus.SetTitle(truncate(err.Error(), 60))
-	systray.SetTooltip("raudio — " + truncate(err.Error(), 100))
+	systray.SetTooltip("godio — " + truncate(err.Error(), 100))
 }
 
 // refresh updates the icon and tooltip from the live levels.
