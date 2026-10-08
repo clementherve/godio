@@ -103,17 +103,28 @@ jobs:
 
       - name: Package
         shell: pwsh
+        # Two assets: the zip for a first install (it carries the README and the
+        # dependency script), and the bare exe for upgrading in place, where
+        # re-downloading the docs is just noise.
         run: |
-          New-Item -ItemType Directory -Force dist/godio | Out-Null
-          Copy-Item godio.exe, README.md dist/godio/
           New-Item -ItemType Directory -Force dist/godio/scripts | Out-Null
+          Copy-Item godio.exe, README.md dist/godio/
           Copy-Item scripts/fetch-deps.ps1 dist/godio/scripts/
           Compress-Archive -Path dist/godio/* -DestinationPath dist/godio-windows-amd64.zip
+          Copy-Item godio.exe dist/
+
+          # Checksums, so a download can be verified against the build log.
+          Get-FileHash dist/godio-windows-amd64.zip, dist/godio.exe -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Tee-Object -FilePath dist/SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v7
         with:
           name: godio-windows-amd64
-          path: dist/godio-windows-amd64.zip
+          path: |
+            dist/godio-windows-amd64.zip
+            dist/godio.exe
+            dist/SHA256SUMS.txt
           if-no-files-found: error
 
   release:
@@ -133,11 +144,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          assets=(godio.exe godio-windows-amd64.zip SHA256SUMS.txt)
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            godio-windows-amd64.zip \
+            "${assets[@]}" \
           || gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
-            --clobber godio-windows-amd64.zip
+            --clobber "${assets[@]}"
