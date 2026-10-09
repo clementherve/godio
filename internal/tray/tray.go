@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -15,7 +16,10 @@ import (
 	"github.com/clementherve/godio/internal/assets"
 	"github.com/clementherve/godio/internal/audio"
 	"github.com/clementherve/godio/internal/config"
+	"github.com/clementherve/godio/internal/deps"
+	"github.com/clementherve/godio/internal/notify"
 	"github.com/clementherve/godio/internal/pipeline"
+	"github.com/clementherve/godio/internal/winui"
 )
 
 // App holds the tray's state.
@@ -34,6 +38,13 @@ type App struct {
 	mFolder *systray.MenuItem
 	mQuit   *systray.MenuItem
 
+	mVault  *systray.MenuItem
+	mEdit   *systray.MenuItem
+	mReload *systray.MenuItem
+	mSetup  *systray.MenuItem
+
+	notifier notify.Notifier
+
 	micItems  []*deviceItem
 	outItems  []*deviceItem
 	lastState assets.IconState
@@ -46,7 +57,7 @@ type deviceItem struct {
 
 // Run starts the tray and blocks until the user quits.
 func Run(cfg config.Config) error {
-	a := &App{cfg: cfg, lastState: -1}
+	a := &App{cfg: cfg, lastState: -1, notifier: notify.New()}
 	systray.Run(a.onReady, a.onExit)
 	return nil
 }
@@ -61,6 +72,13 @@ func (a *App) onReady() {
 
 	systray.AddSeparator()
 	a.buildDeviceMenus()
+
+	systray.AddSeparator()
+	cfgMenu := systray.AddMenuItem("Configuration", "")
+	a.mVault = cfgMenu.AddSubMenuItem("Choisir le coffre Obsidian…", "")
+	a.mEdit = cfgMenu.AddSubMenuItem("Ouvrir config.toml", "")
+	a.mReload = cfgMenu.AddSubMenuItem("Recharger", "")
+	a.mSetup = systray.AddMenuItem("Installer / mettre à jour les modèles…", "")
 
 	systray.AddSeparator()
 	a.mNote = systray.AddMenuItem("Ouvrir la note du jour", "")
@@ -140,6 +158,10 @@ func (a *App) loop() {
 	}
 
 	watch(a.mToggle, a.toggle)
+	watch(a.mVault, a.chooseVault)
+	watch(a.mEdit, a.editConfig)
+	watch(a.mReload, a.reloadConfig)
+	watch(a.mSetup, func() { go a.runSetup() })
 	watch(a.mNote, func() { open(a.cfg.DailyNotePath(time.Now())) })
 	watch(a.mFolder, a.openSessionFolder)
 	watch(a.mQuit, func() { systray.Quit() })
@@ -279,25 +301,32 @@ func (a *App) stop() {
 	res, err := rec.Stop()
 	actx.Close()
 	if err != nil {
-		a.finish(fmt.Errorf("arrêt de l'enregistrement : %w", err))
+		a.finish(pipeline.Result{}, fmt.Errorf("arrêt de l'enregistrement : %w", err))
 		return
 	}
 	sess.RecordResult(res)
 	if err := sess.Save(); err != nil {
-		a.finish(err)
+		a.finish(pipeline.Result{}, err)
 		return
 	}
 
 	// Processing runs off the event loop so the menu stays responsive while
 	// Whisper works through what may be an hour of audio.
 	go func() {
-		p := pipeline.Pipeline{Cfg: a.cfg, Log: func(s string) { a.mStatus.SetTitle(s) }}
-		_, err := p.Process(context.Background(), sess)
-		a.finish(err)
+		p := pipeline.Pipeline{
+			Cfg: a.cfg,
+			Log: func(s string) { a.mStatus.SetTitle(s) },
+			OnProgress: func(stage string, pc int) {
+				a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, pc))
+				systray.SetTooltip(fmt.Sprintf("godio — %s %d%%", stage, pc))
+			},
+		}
+		res, err := p.Process(context.Background(), sess)
+		a.finish(res, err)
 	}()
 }
 
-func (a *App) finish(err error) {
+func (a *App) finish(res pipeline.Result, err error) {
 	a.mu.Lock()
 	a.working = false
 	a.mu.Unlock()
@@ -307,10 +336,22 @@ func (a *App) finish(err error) {
 
 	if err != nil {
 		a.fail(err)
+		a.notifier.Failed(truncate(err.Error(), 200))
 		return
 	}
+
 	a.setIcon(assets.IconIdle)
-	a.mStatus.SetTitle("Notes ajoutées à la note du jour")
+	summary := "Notes ajoutées à la note du jour"
+	if res.Actions > 0 {
+		summary = fmt.Sprintf("Notes ajoutées — %d action(s)", res.Actions)
+	}
+	a.mStatus.SetTitle(summary)
+	systray.SetTooltip("godio — prêt")
+
+	// The whole point of a notification here is that transcription takes long
+	// enough to walk away from.
+	a.notifier.Done("godio — réunion traitée",
+		fmt.Sprintf("%s\nTraitée en %s.", summary, res.Elapsed.Round(time.Second)))
 }
 
 func (a *App) fail(err error) {
@@ -335,17 +376,15 @@ func (a *App) refresh() {
 	levels := rec.Levels()
 	me, them := levels[audio.TrackMe], levels[audio.TrackThem]
 
-	state := assets.IconSilent
-	if me.Active && them.Active {
-		state = assets.IconActive
-	}
-	a.setIcon(state)
+	// Upper dot = microphone, lower dot = system sound, each independent, so a
+	// single glance says *which* side went quiet rather than just "something".
+	a.setIcon(assets.Recording(me.Active, them.Active))
 
 	// Showing both levels makes a dead stream obvious before the meeting ends,
 	// rather than after the transcript comes back half empty.
-	systray.SetTooltip(fmt.Sprintf("Moi %.0f dB %s · Eux %.0f dB %s",
-		me.DBFS, mark(me.Active), them.DBFS, mark(them.Active)))
-	a.mStatus.SetTitle(fmt.Sprintf("Moi %s · Eux %s", mark(me.Active), mark(them.Active)))
+	systray.SetTooltip(fmt.Sprintf("Micro %s %.0f dB\nSystème %s %.0f dB",
+		mark(me.Active), me.DBFS, mark(them.Active), them.DBFS))
+	a.mStatus.SetTitle(fmt.Sprintf("Micro %s · Système %s", mark(me.Active), mark(them.Active)))
 }
 
 func mark(active bool) string {
@@ -353,6 +392,127 @@ func mark(active bool) string {
 		return "●"
 	}
 	return "○"
+}
+
+// chooseVault asks for the Obsidian vault with a native folder picker and
+// saves it. This is the one setting that has to be right on first run, and the
+// one nobody wants to type a Windows path for.
+func (a *App) chooseVault() {
+	go func() {
+		path, err := winui.PickFolder("Choisissez votre coffre Obsidian")
+		if err != nil {
+			if _, cancelled := err.(winui.ErrCancelled); !cancelled {
+				a.fail(err)
+			}
+			return
+		}
+
+		a.mu.Lock()
+		a.cfg.Obsidian.Vault = path
+		cfg := a.cfg
+		a.mu.Unlock()
+
+		if err := cfg.Save(); err != nil {
+			a.fail(err)
+			return
+		}
+		a.mStatus.SetTitle("Coffre : " + filepath.Base(path))
+	}()
+}
+
+func (a *App) editConfig() {
+	path, err := config.Path()
+	if err != nil {
+		a.fail(err)
+		return
+	}
+	open(path)
+}
+
+// reloadConfig re-reads config.toml so edits take effect without restarting.
+func (a *App) reloadConfig() {
+	cfg, _, err := config.Load()
+	if err != nil {
+		a.fail(err)
+		return
+	}
+	a.mu.Lock()
+	// Device choices live in the menu, which is built once at startup, so they
+	// are kept rather than clobbered by whatever the file says.
+	cfg.Audio.MicDevice = a.cfg.Audio.MicDevice
+	cfg.Audio.LoopbackDevice = a.cfg.Audio.LoopbackDevice
+	a.cfg = cfg
+	a.mu.Unlock()
+	a.mStatus.SetTitle("Configuration rechargée")
+}
+
+// runSetup downloads whisper.cpp and the models, reporting progress in the menu.
+func (a *App) runSetup() {
+	a.mu.Lock()
+	busy := a.working || (a.rec != nil && a.rec.Running())
+	if !busy {
+		a.working = true
+	}
+	cfg := a.cfg
+	a.mu.Unlock()
+
+	if busy {
+		a.mStatus.SetTitle("Occupé — réessayez après l'enregistrement")
+		return
+	}
+	defer func() {
+		a.mu.Lock()
+		a.working = false
+		a.mu.Unlock()
+		a.mSetup.Enable()
+	}()
+
+	a.mSetup.Disable()
+	a.setIcon(assets.IconProcessing)
+	a.mStatus.SetTitle("Recherche des dépendances…")
+
+	ctx := context.Background()
+	dir := filepath.Dir(cfg.Resolve(cfg.Whisper.Exe))
+	root := filepath.Dir(dir)
+
+	plan, err := deps.MakePlan(ctx, root, deps.Backend(cfg.Whisper.Backend))
+	if err != nil {
+		a.fail(err)
+		a.notifier.Failed(truncate(err.Error(), 200))
+		return
+	}
+	if !plan.NeedsDownload() {
+		a.setIcon(assets.IconIdle)
+		a.mStatus.SetTitle("Dépendances déjà installées (" + string(plan.Backend) + ")")
+		return
+	}
+
+	err = deps.Install(ctx, root, plan, func(stage string, done, total int64) {
+		if total > 0 {
+			a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, done*100/total))
+			return
+		}
+		a.mStatus.SetTitle(fmt.Sprintf("%s %d Mo", stage, done/(1<<20)))
+	})
+	if err != nil {
+		a.fail(err)
+		a.notifier.Failed(truncate(err.Error(), 200))
+		return
+	}
+
+	// Point the config at what was actually installed: the model name depends
+	// on the backend that was resolved.
+	a.mu.Lock()
+	a.cfg.Whisper.Model = filepath.Join("models", plan.Speech.Name)
+	a.cfg.Whisper.VADModel = filepath.Join("models", plan.VAD.Name)
+	saved := a.cfg
+	a.mu.Unlock()
+	_ = saved.Save()
+
+	a.setIcon(assets.IconIdle)
+	a.mStatus.SetTitle("Dépendances installées (" + string(plan.Backend) + ")")
+	a.notifier.Done("godio — installation terminée",
+		"whisper.cpp "+plan.Release+" ("+string(plan.Backend)+") et les modèles sont prêts.")
 }
 
 // setIcon avoids redundant redraws, which flicker on some Windows builds.

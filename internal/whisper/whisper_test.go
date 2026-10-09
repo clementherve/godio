@@ -1,8 +1,12 @@
 package whisper
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/clementherve/godio/internal/config"
 )
 
 // Shape taken from whisper-cli's -oj output.
@@ -75,5 +79,74 @@ func TestParseEmptyTranscription(t *testing.T) {
 func TestParseInvalidJSON(t *testing.T) {
 	if _, err := Parse([]byte("not json")); err == nil {
 		t.Error("Parse(invalid) = nil error, want error")
+	}
+}
+
+func TestScanProgressReportsPercentAndKeepsTail(t *testing.T) {
+	stderr := strings.NewReader(strings.Join([]string{
+		"whisper_init_from_file_with_params_no_state: loading model",
+		"whisper_print_progress_callback: progress =   5%",
+		"whisper_print_progress_callback: progress =  50%",
+		"some warning about something",
+		"whisper_print_progress_callback: progress = 100%",
+		"ggml_backend: note",
+	}, "\n"))
+
+	var got []int
+	r := Runner{OnProgress: func(p int) { got = append(got, p) }}
+	tail := r.scanProgress(stderr)
+	text := tail()
+
+	want := []int{5, 50, 100}
+	if len(got) != len(want) {
+		t.Fatalf("progress = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("progress[%d] = %d, want %d", i, got[i], want[i])
+		}
+	}
+
+	// Progress lines must not pollute the error tail.
+	if strings.Contains(text, "progress =") {
+		t.Errorf("tail contains progress lines:\n%s", text)
+	}
+	if !strings.Contains(text, "some warning about something") {
+		t.Errorf("tail lost a real stderr line:\n%s", text)
+	}
+}
+
+func TestScanProgressBoundsTheTail(t *testing.T) {
+	var lines []string
+	for i := 0; i < 500; i++ {
+		lines = append(lines, fmt.Sprintf("noisy line %d", i))
+	}
+	tail := Runner{}.scanProgress(strings.NewReader(strings.Join(lines, "\n")))
+	text := tail()
+
+	if n := len(strings.Split(text, "\n")); n > 8 {
+		t.Errorf("tail kept %d lines, want at most 8", n)
+	}
+	// It must keep the *last* lines: those explain a failure.
+	if !strings.Contains(text, "noisy line 499") {
+		t.Errorf("tail dropped the most recent line:\n%s", text)
+	}
+}
+
+func TestDecodingPresets(t *testing.T) {
+	for _, tc := range []struct {
+		preset string
+		want   string
+	}{
+		{"fast", "-bs 1 -nf"},
+		{"balanced", "-bs 2"},
+		{"accurate", "-bs 5"},
+		{"", "-bs 1 -nf"}, // unset falls back to fast
+		{"nonsense", "-bs 1 -nf"},
+	} {
+		got := strings.Join(config.Whisper{Preset: tc.preset}.Decoding(), " ")
+		if got != tc.want {
+			t.Errorf("preset %q -> %q, want %q", tc.preset, got, tc.want)
+		}
 	}
 }

@@ -61,14 +61,6 @@ jobs:
             exit 1
           fi
 
-      - name: Check PowerShell scripts parse
-        shell: pwsh
-        run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path ./scripts/fetch-deps.ps1), [ref]$null, [ref]$errors) | Out-Null
-          if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
-
       - name: Resolve version
         id: version
         shell: bash
@@ -83,23 +75,23 @@ jobs:
         shell: bash
         # -extldflags=-static links the mingw runtime in, so the result does not
         # need libgcc/libwinpthread beside it. The DLL check below proves it.
+        #
+        # godio-tray additionally gets -H windowsgui: a GUI-subsystem process
+        # started from a terminal is not attached to that console, so it shows
+        # no console window and survives the terminal closing.
         run: |
-          go build -trimpath \
-            -ldflags "-s -w -X main.version=${{ steps.version.outputs.value }} -extldflags=-static" \
-            -o godio.exe ./cmd/godio
+          common="-s -w -X main.version=${{ steps.version.outputs.value }} -extldflags=-static"
+          go build -trimpath -ldflags "$common" -o godio.exe ./cmd/godio
+          go build -trimpath -ldflags "$common -H windowsgui" -o godio-tray.exe ./cmd/godio-tray
 
-      - name: Verify the binary is self-contained
+      - name: Verify the binaries
         shell: bash
-        # A static build should import only system DLLs. If libgcc_s or
-        # libwinpthread appear here, the exe needs those files shipped with it.
+        # Checks the PE subsystem (the tray must be GUI, or it opens a console
+        # window and dies with the launching terminal) and the imported DLLs
+        # (nothing from the mingw runtime, or the exe is not self-contained).
         run: |
           ./godio.exe version
-          echo "--- imported DLLs:"
-          objdump -p godio.exe | grep "DLL Name:" | sort -u
-          if objdump -p godio.exe | grep -Eiq "DLL Name:.*(libgcc|libwinpthread|libstdc)"; then
-            echo "::error::Binary depends on mingw runtime DLLs; static linking did not take effect."
-            exit 1
-          fi
+          go run ./scripts/checkpe godio.exe console godio-tray.exe gui
 
       - name: Package
         shell: pwsh
@@ -107,14 +99,13 @@ jobs:
         # dependency script), and the bare exe for upgrading in place, where
         # re-downloading the docs is just noise.
         run: |
-          New-Item -ItemType Directory -Force dist/godio/scripts | Out-Null
-          Copy-Item godio.exe, README.md dist/godio/
-          Copy-Item scripts/fetch-deps.ps1 dist/godio/scripts/
+          New-Item -ItemType Directory -Force dist/godio | Out-Null
+          Copy-Item godio.exe, godio-tray.exe, README.md dist/godio/
           Compress-Archive -Path dist/godio/* -DestinationPath dist/godio-windows-amd64.zip
-          Copy-Item godio.exe dist/
+          Copy-Item godio.exe, godio-tray.exe dist/
 
           # Checksums, so a download can be verified against the build log.
-          Get-FileHash dist/godio-windows-amd64.zip, dist/godio.exe -Algorithm SHA256 |
+          Get-FileHash dist/godio-windows-amd64.zip, dist/godio.exe, dist/godio-tray.exe -Algorithm SHA256 |
             ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
             Tee-Object -FilePath dist/SHA256SUMS.txt
 
@@ -124,6 +115,7 @@ jobs:
           path: |
             dist/godio-windows-amd64.zip
             dist/godio.exe
+            dist/godio-tray.exe
             dist/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -144,7 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          assets=(godio.exe godio-windows-amd64.zip SHA256SUMS.txt)
+          assets=(godio-tray.exe godio.exe godio-windows-amd64.zip SHA256SUMS.txt)
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \

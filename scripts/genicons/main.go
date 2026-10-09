@@ -29,21 +29,28 @@ var (
 	green      = color.NRGBA{0x3F, 0xC9, 0x6B, 0xFF}
 	red        = color.NRGBA{0xE5, 0x4B, 0x4B, 0xFF}
 	amber      = color.NRGBA{0xF0, 0xA8, 0x2E, 0xFF}
+	inactive   = color.NRGBA{0x6B, 0x70, 0x78, 0xFF}
 )
 
+// state is one tray icon: the mic glyph plus a right-hand column of two status
+// dots, upper = microphone, lower = system sound.
 type state struct {
-	name  string
-	dot   *color.NRGBA // nil = no dot
-	cross bool         // draw a cross instead of a plain dot
+	name string
+	// upper and lower are the two dot colours; nil draws the inactive grey.
+	upper, lower *color.NRGBA
+	// badge replaces the two dots with a single crossed disc, for errors.
+	badge *color.NRGBA
 }
 
 func main() {
 	states := []state{
-		{name: "idle", dot: nil},
-		{name: "active", dot: &green},
-		{name: "silent", dot: &red},
-		{name: "processing", dot: &amber},
-		{name: "error", dot: &red, cross: true},
+		{name: "idle"},
+		{name: "rec-mic-sys", upper: &green, lower: &green},
+		{name: "rec-mic", upper: &green, lower: &red},
+		{name: "rec-sys", upper: &red, lower: &green},
+		{name: "rec-none", upper: &red, lower: &red},
+		{name: "processing", upper: &amber, lower: &amber},
+		{name: "error", badge: &red},
 	}
 
 	out := filepath.Join("internal", "assets", "icons")
@@ -60,7 +67,7 @@ func main() {
 		}
 		write(filepath.Join(out, s.name+".png"), buf.Bytes())
 		write(filepath.Join(out, s.name+".ico"), ico(buf.Bytes()))
-		fmt.Printf("  %s.png / %s.ico\n", s.name, s.name)
+		fmt.Printf("  %s\n", s.name)
 	}
 }
 
@@ -70,11 +77,13 @@ func write(path string, data []byte) {
 	}
 }
 
-// draw renders one 32x32 icon: a microphone glyph plus an optional status dot.
+// draw renders one 32x32 icon: a microphone glyph on the left, two status dots
+// stacked on the right.
 func draw(s state) *image.NRGBA {
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 
-	// Outline pass first, then the fill on top, so the two never fight.
+	// Outline pass first, then the fill on top. A tray icon has to survive both
+	// the light and the dark Windows taskbar, which a single flat tone cannot.
 	for _, pass := range []struct {
 		grow float64
 		c    color.NRGBA
@@ -83,32 +92,43 @@ func draw(s state) *image.NRGBA {
 		{0, micFill},
 	} {
 		g := pass.grow
-		// The glyph is biased up and left to leave the bottom-right corner
-		// clear for the status dot.
-		//
-		// Capsule (the mic body).
-		capsule(img, 9, 2, 15, 15, 3, g, pass.c)
-		// Cradle: a full half-circle. A shallower arc reads as two detached
-		// wings rather than a cradle at 32px.
-		arc(img, 12, 11, 7, 2+2*g, 0, math.Pi, pass.c)
-		// Stand and base.
-		capsule(img, 11, 17, 13, 23, 1, g, pass.c)
-		capsule(img, 6, 22, 18, 24, 1, g, pass.c)
+		// The glyph is shifted left and shrunk from the single-dot version to
+		// clear the right-hand column for two dots.
+		capsule(img, 6, 3, 12, 14, 3, g, pass.c)
+		arc(img, 9, 11, 6, 2+2*g, 0, math.Pi, pass.c)
+		capsule(img, 8, 16, 10, 22, 1, g, pass.c)
+		capsule(img, 4, 21, 14, 23, 1, g, pass.c)
 	}
 
-	if s.dot == nil {
+	const (
+		dotX  = 23.5
+		upper = 8.5
+		lower = 23.0
+		ringR = 7.0
+		fillR = 5.0
+	)
+
+	if s.badge != nil {
+		// One crossed disc, centred between where the two dots would sit, so an
+		// error never reads as a half-working recording.
+		cy := (upper + lower) / 2
+		disc(img, dotX, cy, ringR+1.5, micOutline)
+		disc(img, dotX, cy, fillR+1.5, *s.badge)
+		line(img, dotX-3.5, cy-3.5, dotX+3.5, cy+3.5, 2.0, micOutline)
+		line(img, dotX+3.5, cy-3.5, dotX-3.5, cy+3.5, 2.0, micOutline)
 		return img
 	}
 
-	// The dot sits bottom-right with a dark ring so it reads clearly against
-	// both the mic glyph and whatever taskbar colour is behind it.
-	cx, cy, r := 24.0, 24.0, 7.5
-	disc(img, cx, cy, r, micOutline)
-	disc(img, cx, cy, r-2, *s.dot)
-
-	if s.cross {
-		line(img, cx-3, cy-3, cx+3, cy+3, 1.8, micOutline)
-		line(img, cx+3, cy-3, cx-3, cy+3, 1.8, micOutline)
+	for _, d := range []struct {
+		y float64
+		c *color.NRGBA
+	}{{upper, s.upper}, {lower, s.lower}} {
+		fill := inactive
+		if d.c != nil {
+			fill = *d.c
+		}
+		disc(img, dotX, d.y, ringR, micOutline)
+		disc(img, dotX, d.y, fillR, fill)
 	}
 	return img
 }

@@ -4,13 +4,16 @@
 package whisper
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +27,10 @@ type Runner struct {
 	VADModel string
 	Language string
 	Threads  int
+	// Decoding holds the preset's flags, e.g. []string{"-bs", "1", "-nf"}.
+	Decoding []string
+	// OnProgress, if set, is called with 0..100 as transcription advances.
+	OnProgress func(percent int)
 }
 
 // jsonOutput mirrors the subset of whisper-cli's -oj output that we need.
@@ -36,6 +43,11 @@ type jsonOutput struct {
 		Text string `json:"text"`
 	} `json:"transcription"`
 }
+
+// progressLine matches whisper-cli's progress output, e.g.
+//
+//	whisper_print_progress_callback: progress =  45%
+var progressLine = regexp.MustCompile(`progress\s*=\s*(\d+)%`)
 
 // Transcribe runs whisper-cli over a 16 kHz mono WAV and returns its segments.
 //
@@ -50,10 +62,12 @@ func (r Runner) Transcribe(ctx context.Context, wavPath string) ([]transcript.Se
 		"-l", r.Language,
 		"-oj",       // write <base>.json
 		"-of", base, // output base name
-		"--no-prints", // keep stderr for real errors
+		"-np", // silence the log callback
+		"-pp", // ...but keep progress, which writes to stderr directly
 	}
+	args = append(args, r.Decoding...)
 	if r.Threads > 0 {
-		args = append(args, "-t", fmt.Sprint(r.Threads))
+		args = append(args, "-t", strconv.Itoa(r.Threads))
 	}
 	// VAD does double duty: it skips the long stretches where this track is
 	// silent because the other party is talking, and it suppresses Whisper's
@@ -63,15 +77,66 @@ func (r Runner) Transcribe(ctx context.Context, wavPath string) ([]transcript.Se
 	}
 
 	cmd := exec.CommandContext(ctx, r.Exe, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
 	cmd.Stdout = nil
 
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("whisper-cli %s: %w\n%s", filepath.Base(wavPath), err, tail(stderr.String()))
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("starting whisper-cli: %w", err)
+	}
+
+	tail := r.scanProgress(stderr)
+
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("whisper-cli %s: %w\n%s", filepath.Base(wavPath), err, tail())
+	}
+	if r.OnProgress != nil {
+		r.OnProgress(100)
 	}
 
 	return parseFile(base + ".json")
+}
+
+// scanProgress consumes stderr, reporting progress as it goes, and returns an
+// accessor for the last few lines.
+//
+// Only a bounded tail is kept: whisper is chatty over a long meeting, and the
+// lines are only ever wanted to explain a failure.
+func (r Runner) scanProgress(stderr io.Reader) func() string {
+	const keep = 8
+	var ring []string
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc := bufio.NewScanner(stderr)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" {
+				continue
+			}
+			if m := progressLine.FindStringSubmatch(line); m != nil {
+				if r.OnProgress != nil {
+					if n, err := strconv.Atoi(m[1]); err == nil {
+						r.OnProgress(n)
+					}
+				}
+				continue
+			}
+			ring = append(ring, line)
+			if len(ring) > keep {
+				ring = ring[len(ring)-keep:]
+			}
+		}
+	}()
+
+	return func() string {
+		<-done
+		return strings.Join(ring, "\n")
+	}
 }
 
 func parseFile(path string) ([]transcript.Segment, error) {
@@ -116,13 +181,4 @@ func isNoise(text string) bool {
 		}
 	}
 	return false
-}
-
-// tail returns the last few lines of s, for error messages.
-func tail(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	if len(lines) > 8 {
-		lines = lines[len(lines)-8:]
-	}
-	return strings.Join(lines, "\n")
 }

@@ -22,6 +22,23 @@ type Pipeline struct {
 	Cfg config.Config
 	// Log receives short progress lines; may be nil.
 	Log func(string)
+	// OnProgress receives a stage name and a 0..100 percentage; may be nil.
+	// Transcription is the only stage that can report a real percentage, so the
+	// others report 0 and 100 around themselves.
+	OnProgress func(stage string, percent int)
+}
+
+// Result describes a completed run, for the completion notification.
+type Result struct {
+	NotePath string
+	Actions  int           // unchecked action items Claude produced
+	Elapsed  time.Duration // wall time of the whole pipeline
+}
+
+func (p Pipeline) progress(stage string, percent int) {
+	if p.OnProgress != nil {
+		p.OnProgress(stage, percent)
+	}
 }
 
 func (p Pipeline) logf(format string, args ...any) {
@@ -41,10 +58,11 @@ func (p Pipeline) Transcribe(ctx context.Context, s *Session) (string, error) {
 		VADModel: p.Cfg.Resolve(p.Cfg.Whisper.VADModel),
 		Language: p.Cfg.Whisper.Language,
 		Threads:  p.Cfg.Whisper.Threads,
+		Decoding: p.Cfg.Whisper.Decoding(),
 	}
 
 	var mine, theirs []transcript.Segment
-	for _, t := range []struct {
+	for i, t := range []struct {
 		track audio.Track
 		into  *[]transcript.Segment
 		label string
@@ -59,6 +77,14 @@ func (p Pipeline) Transcribe(ctx context.Context, s *Session) (string, error) {
 
 		p.logf("Transcription (%s)…", t.label)
 		start := time.Now()
+
+		// Two tracks are transcribed back to back, so each one's 0..100 covers
+		// half of the overall bar.
+		half := i
+		r.OnProgress = func(pc int) {
+			p.progress("Transcription", (half*100+pc)/2)
+		}
+
 		segs, err := r.Transcribe(ctx, path)
 		if err != nil {
 			return "", err
@@ -98,6 +124,7 @@ func (p Pipeline) Extract(ctx context.Context, s *Session) (string, error) {
 	}
 
 	p.logf("Extraction (%s)…", p.Cfg.Claude.Model)
+	p.progress("Extraction", 0)
 	notes, err := r.Extract(ctx, assets.ExtractPromptFR, string(raw))
 	if err != nil {
 		return "", err
@@ -130,14 +157,39 @@ func (p Pipeline) Write(s *Session) (string, error) {
 }
 
 // Process runs transcribe, extract and write in sequence.
-func (p Pipeline) Process(ctx context.Context, s *Session) (string, error) {
+func (p Pipeline) Process(ctx context.Context, s *Session) (Result, error) {
+	start := time.Now()
+
 	if _, err := p.Transcribe(ctx, s); err != nil {
-		return "", err
+		return Result{}, err
 	}
-	if _, err := p.Extract(ctx, s); err != nil {
-		return "", err
+	notes, err := p.Extract(ctx, s)
+	if err != nil {
+		return Result{}, err
 	}
-	return p.Write(s)
+	path, err := p.Write(s)
+	if err != nil {
+		return Result{}, err
+	}
+	p.progress("Terminé", 100)
+
+	return Result{
+		NotePath: path,
+		Actions:  CountActions(notes),
+		Elapsed:  time.Since(start),
+	}, nil
+}
+
+// CountActions counts the unchecked Markdown checkboxes in Claude's notes, so
+// the completion notification can say something more useful than "done".
+func CountActions(notes string) int {
+	n := 0
+	for _, line := range strings.Split(notes, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "- [ ]") {
+			n++
+		}
+	}
+	return n
 }
 
 // Title returns the session's meeting title, defaulting to its start time.

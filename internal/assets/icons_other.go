@@ -10,11 +10,17 @@ import _ "embed"
 //go:embed icons/idle.png
 var iconIdle []byte
 
-//go:embed icons/active.png
-var iconActive []byte
+//go:embed icons/rec-mic-sys.png
+var iconRecMicSys []byte
 
-//go:embed icons/silent.png
-var iconSilent []byte
+//go:embed icons/rec-mic.png
+var iconRecMic []byte
+
+//go:embed icons/rec-sys.png
+var iconRecSys []byte
+
+//go:embed icons/rec-none.png
+var iconRecNone []byte
 
 //go:embed icons/processing.png
 var iconProcessing []byte

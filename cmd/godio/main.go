@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/clementherve/godio/internal/audio"
 	"github.com/clementherve/godio/internal/claudecli"
 	"github.com/clementherve/godio/internal/config"
+	"github.com/clementherve/godio/internal/deps"
 	"github.com/clementherve/godio/internal/pipeline"
 )
 
@@ -28,7 +31,8 @@ var version = "dev"
 const usage = `godio — notes de réunion automatiques
 
 Usage:
-  godio run                  lance l'application (icône de notification)
+  godio run                  lance l'icône de notification (console attachée ;
+                             pour un usage normal lancez godio-tray.exe)
   godio devices              liste les périphériques audio
   godio doctor               vérifie la configuration et les dépendances
   godio record [-s N]        enregistre (N secondes, ou Ctrl+C)
@@ -36,7 +40,8 @@ Usage:
   godio extract [session]    génère les notes via Claude
   godio write [session]      ajoute les notes à la note du jour
   godio process [session]    transcribe + extract + write
-  godio config               affiche le chemin et le contenu de la config
+  godio setup [--dry-run]    télécharge whisper.cpp et les modèles
+  godio config [edit]        affiche ou ouvre la configuration
   godio version              affiche la version
 
 [session] est un dossier de session ; par défaut, le plus récent.
@@ -59,6 +64,7 @@ func run(cmd string, args []string) error {
 	switch cmd {
 	case "run":
 		return cmdRun()
+
 	case "devices":
 		return cmdDevices()
 	case "doctor":
@@ -68,7 +74,9 @@ func run(cmd string, args []string) error {
 	case "transcribe", "extract", "write", "process":
 		return cmdStage(cmd, args)
 	case "config":
-		return cmdConfig()
+		return cmdConfig(args)
+	case "setup":
+		return cmdSetup(args)
 	case "version", "--version", "-v":
 		fmt.Printf("godio %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 		return nil
@@ -95,13 +103,16 @@ func load() (config.Config, error) {
 	return cfg, nil
 }
 
-func cmdConfig() error {
+func cmdConfig(args []string) error {
 	path, err := config.Path()
 	if err != nil {
 		return err
 	}
 	if _, err := load(); err != nil {
 		return err
+	}
+	if len(args) > 0 && args[0] == "edit" {
+		return openInEditor(path)
 	}
 	fmt.Println(path)
 	fmt.Println()
@@ -170,6 +181,17 @@ func cmdDoctor() error {
 	fmt.Println("Configuration :")
 	report("config", cfg.Validate())
 
+	backend, gpu := deps.Resolve(deps.Backend(cfg.Whisper.Backend))
+	fmt.Println("Transcription :")
+	fmt.Printf("  · GPU        : %s\n", gpu)
+	fmt.Printf("  · backend    : %s (whisper.backend = %q)\n", backend, cfg.Whisper.Backend)
+	fmt.Printf("  · préréglage : %s (%s)\n", cfg.Whisper.Preset,
+		strings.Join(cfg.Whisper.Decoding(), " "))
+	fmt.Printf("  · threads    : %d (coeurs physiques)\n", cfg.Whisper.Threads)
+	if backend == deps.BackendCPU && gpu.Present {
+		fmt.Println("  ! un GPU NVIDIA est présent mais whisper.backend force le CPU")
+	}
+
 	fmt.Println("Claude Code :")
 	report("claude", claudecli.Runner{Executable: cfg.Claude.Executable}.Check())
 
@@ -194,10 +216,113 @@ func cmdDoctor() error {
 	}
 
 	if !ok {
-		return errors.New("configuration incomplète")
+		return errors.New("configuration incomplète — lancez « godio setup » pour installer les dépendances")
 	}
 	fmt.Println("\nTout est prêt.")
 	return nil
+}
+
+// cmdSetup downloads whisper.cpp and the models.
+func cmdSetup(args []string) error {
+	dryRun := false
+	for _, a := range args {
+		if a == "-n" || a == "--dry-run" {
+			dryRun = true
+		}
+	}
+
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	root := filepath.Dir(filepath.Dir(cfg.Resolve(cfg.Whisper.Exe)))
+
+	fmt.Println("Recherche de la dernière version de whisper.cpp…")
+	plan, err := deps.MakePlan(ctx, root, deps.Backend(cfg.Whisper.Backend))
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("  GPU      : %s\n", plan.GPU)
+	fmt.Printf("  backend  : %s\n", plan.Backend)
+	fmt.Printf("  version  : %s\n", plan.Release)
+	if !plan.NeedsDownload() {
+		fmt.Println("\nTout est déjà installé.")
+		return nil
+	}
+	fmt.Println("  à télécharger :")
+	for _, m := range plan.Missing {
+		fmt.Printf("    - %s\n", m)
+	}
+	fmt.Println()
+
+	if dryRun {
+		fmt.Println("(--dry-run : rien n'a été téléchargé)")
+		return nil
+	}
+
+	last := ""
+	if err := deps.Install(ctx, root, plan, func(stage string, done, total int64) {
+		if stage != last {
+			if last != "" {
+				fmt.Println()
+			}
+			last = stage
+		}
+		if total > 0 {
+			fmt.Printf("\r  %-28s %s %3d%%", stage, bar(int(done*100/total)), done*100/total)
+			return
+		}
+		fmt.Printf("\r  %-28s %d Mo", stage, done/(1<<20))
+	}); err != nil {
+		fmt.Println()
+		return err
+	}
+	fmt.Println()
+
+	// Record what was actually installed; the model name depends on the backend.
+	cfg.Whisper.Model = filepath.Join("models", plan.Speech.Name)
+	cfg.Whisper.VADModel = filepath.Join("models", plan.VAD.Name)
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+
+	fmt.Println("\nInstallation terminée. Vérifiez avec « godio doctor ».")
+	return nil
+}
+
+// bar renders a 0..100 percentage as a fixed-width progress bar.
+func bar(pc int) string {
+	const width = 24
+	n := pc * width / 100
+	if n < 0 {
+		n = 0
+	}
+	if n > width {
+		n = width
+	}
+	return "[" + strings.Repeat("#", n) + strings.Repeat(".", width-n) + "]"
+}
+
+// openInEditor opens a file in the user's default editor.
+func openInEditor(path string) error {
+	if ed := os.Getenv("EDITOR"); ed != "" {
+		cmd := exec.Command(ed, path)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		return cmd.Run()
+	}
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("cmd", "/c", "start", "", path).Start()
+	case "darwin":
+		return exec.Command("open", path).Start()
+	default:
+		return exec.Command("xdg-open", path).Start()
+	}
 }
 
 func orDefault(s string) string {
@@ -369,7 +494,16 @@ func cmdStage(stage string, args []string) error {
 	}
 	fmt.Printf("Session : %s\n", sess.Dir)
 
-	p := pipeline.Pipeline{Cfg: cfg, Log: func(s string) { fmt.Println(s) }}
+	p := pipeline.Pipeline{
+		Cfg: cfg,
+		Log: func(s string) { fmt.Println(s) },
+		OnProgress: func(stage string, pc int) {
+			fmt.Printf("\r  %-16s %s %3d%%", stage, bar(pc), pc)
+			if pc >= 100 {
+				fmt.Println()
+			}
+		},
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -392,8 +526,12 @@ func cmdStage(stage string, args []string) error {
 		_, err := p.Write(sess)
 		return err
 	case "process":
-		_, err := p.Process(ctx, sess)
-		return err
+		res, err := p.Process(ctx, sess)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\n%s\n%d action(s) · %s\n",
+			res.NotePath, res.Actions, res.Elapsed.Round(time.Second))
 	}
 	return nil
 }

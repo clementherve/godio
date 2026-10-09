@@ -1,7 +1,13 @@
-/raudio
-/raudio.exe
+# Built binaries (`go build ./cmd/...` drops them here)
+/godio
+/godio.exe
+/godio-tray
+/godio-tray.exe
+
+# Runtime dependencies installed by `godio setup`
 /whisper/
 /models/
+
 /dist/
 
 # macOS

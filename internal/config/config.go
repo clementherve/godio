@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/klauspost/cpuid/v2"
 )
 
 // Config is the full user configuration, read from config.toml.
@@ -36,13 +37,38 @@ type Audio struct {
 	ActivityWindow Duration `toml:"activity_window"`
 }
 
-// Whisper points at the whisper.cpp binary and its models.
+// Whisper points at the whisper.cpp binary and its models, and tunes how hard
+// it works.
 type Whisper struct {
 	Exe      string `toml:"exe"`
 	Model    string `toml:"model"`
 	VADModel string `toml:"vad_model"`
 	Language string `toml:"language"`
 	Threads  int    `toml:"threads"`
+	// Backend is "auto", "cuda" or "cpu". It selects which whisper.cpp build
+	// `godio setup` installs; "auto" uses CUDA when an NVIDIA GPU is present.
+	Backend string `toml:"backend"`
+	// Preset is "fast", "balanced" or "accurate". See Decoding.
+	Preset string `toml:"preset"`
+}
+
+// Decoding returns the whisper-cli decoding flags for a preset.
+//
+// whisper-cli defaults to beam search with a beam of 5 (its strategy is
+// beam search whenever beam_size > 1), which costs several times what greedy
+// decoding does. Because Claude rewrites the transcript afterwards, most of
+// greedy's extra errors never reach the notes — so "fast" is the default.
+func (w Whisper) Decoding() []string {
+	switch w.Preset {
+	case "accurate":
+		return []string{"-bs", "5"}
+	case "balanced":
+		return []string{"-bs", "2"}
+	default: // fast
+		// -nf disables temperature fallback, which otherwise re-decodes any
+		// segment that trips a confidence threshold.
+		return []string{"-bs", "1", "-nf"}
+	}
 }
 
 // Claude configures the headless Claude Code invocation.
@@ -88,6 +114,9 @@ func Default() Config {
 			Model:    filepath.Join("models", "ggml-large-v3-turbo.bin"),
 			VADModel: filepath.Join("models", "ggml-silero-v5.1.2.bin"),
 			Language: "fr",
+			Backend:  "auto",
+			Preset:   "fast",
+			Threads:  PhysicalCores(),
 		},
 		Claude: Claude{
 			Executable: "claude",
@@ -144,15 +173,48 @@ func Load() (Config, bool, error) {
 }
 
 func writeDefault(path string) error {
+	return writeTo(path, Default())
+}
+
+// header explains the file to whoever opens it, and warns that the tray
+// rewrites it.
+const header = `# Configuration de godio.
+#
+# Ce fichier est relu à chaque démarrage. L'icône de la zone de notification
+# peut le réécrire (menu Configuration), ce qui supprime les commentaires
+# ajoutés à la main.
+#
+#   whisper.preset   fast | balanced | accurate   (vitesse <-> précision)
+#   whisper.backend  auto | cuda | cpu            (auto = CUDA si GPU NVIDIA)
+#   whisper.threads  0 = un par coeur physique
+
+`
+
+// writeTo writes a config atomically, so an interrupted write cannot leave an
+// unparseable config.toml behind.
+func writeTo(path string, c Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".godio-*.toml")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return toml.NewEncoder(f).Encode(Default())
+	name := tmp.Name()
+	defer os.Remove(name)
+
+	if _, err := tmp.WriteString(header); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := toml.NewEncoder(tmp).Encode(c); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 // normalise fills in anything a hand-edited config left blank or zeroed.
@@ -174,7 +236,15 @@ func (c *Config) normalise() {
 		c.Whisper.Language = d.Whisper.Language
 	}
 	if c.Whisper.Threads <= 0 {
-		c.Whisper.Threads = runtime.NumCPU()
+		c.Whisper.Threads = PhysicalCores()
+	}
+	if c.Whisper.Backend == "" {
+		c.Whisper.Backend = d.Whisper.Backend
+	}
+	switch c.Whisper.Preset {
+	case "fast", "balanced", "accurate":
+	default:
+		c.Whisper.Preset = d.Whisper.Preset
 	}
 	if c.Claude.Executable == "" {
 		c.Claude.Executable = d.Claude.Executable
@@ -241,4 +311,34 @@ func exeSuffix() string {
 		return ".exe"
 	}
 	return ""
+}
+
+// PhysicalCores returns the number of physical CPU cores.
+//
+// whisper.cpp wants one thread per physical core, not per logical one: its
+// matrix kernels already saturate each core's SIMD units, so running on
+// hyperthreads adds scheduling contention without adding throughput. Passing
+// runtime.NumCPU() (logical) measurably slows transcription down.
+func PhysicalCores() int {
+	if n := cpuid.CPU.PhysicalCores; n > 0 {
+		return n
+	}
+	// cpuid could not tell; halving the logical count is the right guess on any
+	// hyperthreaded machine and harmless on one without.
+	if n := runtime.NumCPU(); n > 1 {
+		return n / 2
+	}
+	return 1
+}
+
+// Save writes the configuration back to config.toml.
+//
+// Round-tripping through the struct means comments in a hand-edited file are
+// lost, which is why the generated file says so at the top.
+func (c Config) Save() error {
+	path, err := Path()
+	if err != nil {
+		return err
+	}
+	return writeTo(path, c)
 }
