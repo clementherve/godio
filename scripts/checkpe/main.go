@@ -72,11 +72,16 @@ func check(path, want string) error {
 		return fmt.Errorf("%s: subsystem is %s, want %s", path, subsystemName(sub), want)
 	}
 
-	libs, err := f.ImportedLibraries()
+	libs, err := importedLibraries(f)
 	if err != nil {
 		return fmt.Errorf("%s: reading imports: %w", path, err)
 	}
-	sort.Strings(libs)
+	if len(libs) == 0 {
+		// A cgo-linked binary always imports at least KERNEL32. An empty list
+		// means the import table was not parsed, which would make the mingw
+		// check below meaningless.
+		return fmt.Errorf("%s: no imported DLLs found; the import table was not read", path)
+	}
 	fmt.Printf("%s: %s subsystem, imports: %s\n", path, subsystemName(sub), strings.Join(libs, " "))
 
 	for _, lib := range libs {
@@ -87,6 +92,34 @@ func check(path, want string) error {
 		}
 	}
 	return nil
+}
+
+// importedLibraries lists the DLLs a PE file imports.
+//
+// debug/pe exposes ImportedLibraries, but it is a stub that always returns nil
+// — using it makes this whole check pass vacuously. ImportedSymbols is really
+// implemented and yields "Symbol:LIBRARY.dll", so the libraries are derived
+// from it instead.
+func importedLibraries(f *pe.File) ([]string, error) {
+	syms, err := f.ImportedSymbols()
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var libs []string
+	for _, s := range syms {
+		i := strings.LastIndex(s, ":")
+		if i < 0 {
+			continue
+		}
+		lib := s[i+1:]
+		if lib != "" && !seen[lib] {
+			seen[lib] = true
+			libs = append(libs, lib)
+		}
+	}
+	sort.Strings(libs)
+	return libs, nil
 }
 
 func subsystem(f *pe.File) (uint16, error) {
