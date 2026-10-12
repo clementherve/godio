@@ -1,184 +1,165 @@
-# godio
+# Godio
 
-Enregistre une réunion sous Windows, la transcrit **localement**, en extrait
-l'essentiel avec Claude Code, et ajoute le résultat à votre note du jour Obsidian.
+[![CI](https://github.com/clementherve/godio/actions/workflows/ci.yml/badge.svg)](https://github.com/clementherve/godio/actions/workflows/ci.yml)
+
+Record reunions and transcribe them using Whisper then interpret them using claude code before saving them into Obsidian.
 
 ```
-micro          ──► me.wav   ──┐
-                               ├──► transcription ──► Claude (Haiku) ──► note du jour
-sortie système ──► them.wav ──┘
+micro           ──► me.wav   ──┐
+                               ├──► transcription ──► Claude (Haiku) ──► daily note
+system          ──► them.wav ──┘
 ```
 
-Les deux pistes sont enregistrées séparément : c'est ce qui donne l'attribution
-« moi » / « interlocuteur » sans modèle de diarisation.
+## Requirements
 
-L'audio ne quitte jamais la machine — la transcription tourne en local via
-whisper.cpp. Seul le texte transcrit est transmis à Claude Code.
-
-## Prérequis
-
-- Windows 10 1703 ou plus récent (le loopback WASAPI événementiel l'exige)
-- [Claude Code](https://claude.com/claude-code) dans le `PATH`
-- Un coffre Obsidian
-- Pour compiler : Go 1.25+ et un compilateur C (malgo utilise cgo)
+- Windows 10 1703 or more recent (event-driven WASAPI loopback requires it)
+- [Claude Code](https://claude.com/claude-code) in the `PATH`
+- Obsidian Vault
+- To build from source: Go 1.25+ and a C compiler for Malgo (cgo)
 
 ## Installation
 
-Téléchargez l'archive depuis les [releases](https://github.com/clementherve/godio/releases),
-décompressez-la, puis :
+Download the latest [release](https://github.com/clementherve/godio/releases), then:
 
 ```powershell
-.\godio.exe setup      # télécharge whisper.cpp et les modèles (CUDA si GPU NVIDIA)
-.\godio.exe doctor     # vérifie que tout est en place
+.\godio.exe setup
+.\godio.exe doctor
 ```
 
-`setup` choisit automatiquement la bonne variante : build CUDA en présence d'un
-GPU NVIDIA, build CPU sinon. Le coffre Obsidian se choisit ensuite depuis le
-menu de l'icône (**Configuration ▸ Choisir le coffre Obsidian…**).
+## Two binaries
 
-## Deux binaires
+| Binary               | Role                                                       |
+| -------------------- | ---------------------------------------------------------- |
+| **`godio-tray.exe`** | **the application** — the notification-area icon           |
+| `godio.exe`          | the command line: `setup`, `doctor`, `record`, `transcribe`… |
 
-| Binaire | Rôle |
-|---|---|
-| **`godio-tray.exe`** | **l'application** — icône dans la zone de notification |
-| `godio.exe` | la ligne de commande : `setup`, `doctor`, `record`, `transcribe`… |
+`godio-tray.exe` is built into the Windows GUI subsystem: it never opens a
+console window, and it **survives the terminal it was launched from being
+closed**. That is the one to pin, or to put in your startup folder.
 
-`godio-tray.exe` est compilé dans le sous-système graphique de Windows : il
-n'ouvre jamais de fenêtre de console, et il **survit à la fermeture du terminal**
-depuis lequel vous l'avez lancé. C'est celui à épingler ou à mettre au démarrage.
+`godio.exe` stays a console application so that its commands can print
+something.
 
-`godio.exe` reste une application console pour que ses commandes affichent
-quelque chose.
+## The tray icon
 
-## L'icône
+Two dots, stacked to the right of the microphone:
 
-Deux pastilles, empilées à droite du micro :
+| Dot        | Meaning                              |
+| ---------- | ------------------------------------ |
+| **top**    | the microphone — you                 |
+| **bottom** | the system audio — the other party   |
 
-| Pastille | Signification |
-|---|---|
-| **haut** | le micro — vous |
-| **bas** | le son système — l'interlocuteur |
+| Colour    | State                                             |
+| --------- | ------------------------------------------------- |
+| grey      | idle, not recording                               |
+| **green** | this source made some sound recently              |
+| **red**   | this source is silent                             |
+| orange    | processing (the percentage is in the menu)        |
+| red cross | error (the details are in the menu)               |
 
-| Couleur | État |
-|---|---|
-| gris | en veille, pas d'enregistrement |
-| **vert** | cette source a produit du son récemment |
-| **rouge** | cette source est muette |
-| orange | traitement en cours (le pourcentage est dans le menu) |
-| croix rouge | erreur (le détail est dans le menu) |
+**The bottom dot turning red is the signal that matters.** It usually means
+Teams is playing audio to a different device than the one being captured:
+change « Sortie capturée » in the menu. Without that, the other party is
+recorded in silence, and you would only find out after the meeting.
 
-**La pastille basse en rouge est le signal important.** Elle veut généralement
-dire que Teams joue le son sur un périphérique différent de celui qui est
-capturé : changez la « Sortie capturée » dans le menu. Sans cela l'autre partie
-est enregistrée en silence, et vous ne le découvririez qu'après la réunion.
+The indicator uses a 10-second sliding window, so a normal conversation, where
+each side speaks in turn, stays green on both dots.
 
-L'indicateur utilise une fenêtre glissante de 10 secondes : une conversation
-normale, où chacun parle à son tour, reste verte des deux côtés.
+A Windows notification is shown once the meeting has been processed —
+transcription takes long enough that you will have walked away from the
+machine.
 
-Une notification Windows s'affiche quand la réunion est traitée — la
-transcription prend assez de temps pour qu'on s'éloigne de la machine.
+## Transcription speed
 
-## Vitesse de transcription
-
-Deux réglages dans `config.toml` :
+Two settings in `config.toml`:
 
 ```toml
 [whisper]
 backend = "auto"    # auto | cuda | cpu
 preset  = "fast"    # fast | balanced | accurate
-threads = 0         # 0 = un par coeur physique
+threads = 0         # 0 = one per physical core
 ```
 
-**`backend`** est de loin le plus important. Un GPU NVIDIA transcrit 5 à 10 fois
-plus vite que le CPU. `auto` détecte le GPU via `nvidia-smi` et installe la bonne
-variante ; `godio doctor` indique laquelle est demandée **et** laquelle est
-réellement installée. Si les deux diffèrent — typiquement un dossier `whisper\`
-installé en CPU avant l'ajout du GPU ou par l'ancien `fetch-deps.ps1` — la
-transcription reste sur le CPU quoi que dise `backend` : relancez
-`godio setup`, qui remplace alors le build installé.
+**`backend`** matters by far the most. An NVIDIA GPU transcribes 5 to 10 times
+faster than the CPU. `auto` detects the GPU through `nvidia-smi` and installs
+the matching build; `godio doctor` reports which one is **requested** and which
+one is **actually installed**. When the two differ — typically a `whisper\`
+folder installed as CPU before the GPU was available, or by the old
+`fetch-deps.ps1` — transcription stays on the CPU whatever `backend` says: run
+`godio setup` again and it replaces the installed build.
 
-**`preset`** contrôle le décodage. whisper.cpp fait par défaut une recherche en
-faisceau de largeur 5, ce qui coûte plusieurs fois le décodage glouton :
+**`preset`** controls decoding. whisper.cpp defaults to a beam search of width
+5, which costs several times what greedy decoding does:
 
-| Préréglage | Décodage | |
-|---|---|---|
-| `fast` | `-bs 1 -nf` | **défaut** — environ 2× plus rapide |
-| `balanced` | `-bs 2` | |
-| `accurate` | `-bs 5` | le défaut de whisper.cpp |
+| Preset     | Decoding    |                                   |
+| ---------- | ----------- | --------------------------------- |
+| `fast`     | `-bs 1 -nf` | **default** — roughly 2× faster   |
+| `balanced` | `-bs 2`     |                                   |
+| `accurate` | `-bs 5`     | whisper.cpp's own default         |
 
-`fast` est le défaut parce que Claude réécrit ensuite la transcription : la
-plupart des erreurs supplémentaires du décodage glouton n'atteignent jamais les
-notes. Si vous constatez qu'une décision ou une action se perd, passez à
-`balanced`.
+`fast` is the default because Claude rewrites the transcript afterwards: most
+of greedy decoding's extra errors never reach the notes. If you find a decision
+or an action going missing, move to `balanced`.
 
-**`threads`** vaut un fil par **coeur physique**, pas par coeur logique. Les
-noyaux de calcul de whisper.cpp saturent déjà les unités SIMD de chaque coeur ;
-les hyperthreads ajoutent de la contention sans débit.
+**`threads`** is one thread per **physical core**, not per logical one.
+whisper.cpp's compute kernels already saturate each core's SIMD units;
+hyperthreads add contention without adding throughput.
 
-Le modèle suit le backend : `setup` installe le modèle complet pour le GPU, et
-sa version quantifiée `q5_0` (trois fois plus petite, nettement plus rapide) pour
-le CPU, où la bande passante mémoire est le facteur limitant.
+The model follows the backend: `setup` installs the full model for the GPU, and
+its quantised `q5_0` version (three times smaller, markedly faster) for the
+CPU, where memory bandwidth is the limiting factor.
 
-## En ligne de commande
+## Command line
 
-Chaque étape est exécutable seule, sur un dossier de session existant. Les
-fichiers intermédiaires sont conservés, donc on peut retravailler le prompt
-d'extraction — ou comparer deux préréglages — sans réenregistrer quoi que ce soit.
+Every stage can be run on its own, against an existing session folder. The
+intermediate files are kept, so you can rework the extraction prompt — or
+compare two presets — without re-recording anything.
 
 ```powershell
-.\godio.exe devices              # lister les périphériques
-.\godio.exe doctor               # diagnostiquer la configuration, le GPU, le préréglage
-.\godio.exe setup [--dry-run]    # installer les dépendances
-.\godio.exe record -s 30         # enregistrer 30 s, avec vu-mètres
-.\godio.exe transcribe           # transcrire la dernière session
-.\godio.exe extract              # régénérer les notes via Claude
-.\godio.exe write                # ajouter à la note du jour
-.\godio.exe process              # les trois d'un coup
-.\godio.exe config [edit]        # afficher ou ouvrir la configuration
+.\godio.exe devices              # list the audio devices
+.\godio.exe doctor               # check the configuration, the GPU, the preset
+.\godio.exe setup [--dry-run]    # install the dependencies
+.\godio.exe record -s 30         # record for 30 s, with VU meters
+.\godio.exe transcribe           # transcribe the latest session
+.\godio.exe extract              # regenerate the notes through Claude
+.\godio.exe write                # append to the daily note
+.\godio.exe process              # all three in one go
+.\godio.exe config [edit]        # show or open the configuration
 ```
 
-Sans argument, ces commandes agissent sur la session la plus récente ; on peut
-aussi passer un chemin de session.
+With no argument these commands act on the most recent session; a session path
+can also be passed explicitly.
 
-## Fichiers
+## Files
 
-| Chemin | Contenu |
-|---|---|
-| `%APPDATA%\godio\config.toml` | configuration |
-| `%LOCALAPPDATA%\godio\sessions\<date>\` | une session |
-| └ `me.wav`, `them.wav` | les deux pistes, 16 kHz mono |
-| └ `me.json`, `them.json` | sortie brute de whisper.cpp |
-| └ `transcript.txt` | transcription fusionnée et étiquetée |
-| └ `notes.md` | notes produites par Claude |
-| └ `session.json` | horodatage, périphériques, décalages des pistes |
+| Path                                    | Contents                                      |
+| --------------------------------------- | --------------------------------------------- |
+| `%APPDATA%\godio\config.toml`           | configuration                                 |
+| `%LOCALAPPDATA%\godio\sessions\<date>\` | one session                                   |
+| └ `me.wav`, `them.wav`                  | the two tracks, 16 kHz mono                   |
+| └ `me.json`, `them.json`                | whisper.cpp's raw output                      |
+| └ `transcript.txt`                      | the merged, speaker-labelled transcript       |
+| └ `notes.md`                            | the notes produced by Claude                  |
+| └ `session.json`                        | timestamp, devices, per-track offsets         |
 
-Les enregistrements ne sont jamais supprimés automatiquement : purgez
-`sessions\` vous-même quand vous le souhaitez.
+Recordings are never deleted automatically: purge `sessions\` yourself whenever
+you feel like it.
 
-## Consentement
-
-Enregistrer une conversation sans prévenir les participants est, dans l'Union
-européenne, un problème juridique et pas seulement une question de politesse.
-godio ne s'enregistre jamais tout seul : il faut une action explicite à chaque
-réunion. Prévenez les participants.
-
-## Développement
+## Development
 
 ```bash
-go test ./...                 # la logique pure est testable hors Windows
-go run ./scripts/genicons     # régénérer les icônes
+go test ./...                 # the pure logic is testable off Windows
+go run ./scripts/genicons     # regenerate the icons
 go run ./scripts/checkpe godio.exe console godio-tray.exe gui
 ```
 
-La fusion des transcriptions, le format WAV, l'analyse de la sortie whisper, la
-résolution des releases et l'écriture Obsidian sont couverts par des tests et ne
-dépendent pas de Windows. La capture loopback ne peut être vérifiée que sous
-Windows.
+Transcript merging, the WAV format, parsing whisper's output, resolving
+releases and writing to Obsidian are all covered by tests and do not depend on
+Windows. Loopback capture can only be verified on Windows.
 
-### Intégration continue
+## License
 
-`.github/workflows/ci.yml` compile et teste sous Windows (les runners GitHub
-fournissent mingw-w64, nécessaire à cgo) et publie les deux binaires. `checkpe`
-lit les en-têtes PE pour garantir que `godio-tray.exe` est bien dans le
-sous-système graphique et qu'aucun binaire ne dépend des DLL de mingw. Un tag
-`v*` attache les archives à la release correspondante.
+godio is free software, licensed under the GNU General Public License version 3
+or (at your option) any later version. See [LICENSE](LICENSE).
+
+Copyright (C) 2026 Clément Hervé.
