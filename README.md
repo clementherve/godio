@@ -91,7 +91,11 @@ threads = 0         # 0 = un par coeur physique
 
 **`backend`** est de loin le plus important. Un GPU NVIDIA transcrit 5 à 10 fois
 plus vite que le CPU. `auto` détecte le GPU via `nvidia-smi` et installe la bonne
-variante ; `godio doctor` indique laquelle est active.
+variante ; `godio doctor` indique laquelle est demandée **et** laquelle est
+réellement installée. Si les deux diffèrent — typiquement un dossier `whisper\`
+installé en CPU avant l'ajout du GPU ou par l'ancien `fetch-deps.ps1` — la
+transcription reste sur le CPU quoi que dise `backend` : relancez
+`godio setup`, qui remplace alors le build installé.
 
 **`preset`** contrôle le décodage. whisper.cpp fait par défaut une recherche en
 faisceau de largeur 5, ce qui coûte plusieurs fois le décodage glouton :

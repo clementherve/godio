@@ -182,9 +182,21 @@ func cmdDoctor() error {
 	report("config", cfg.Validate())
 
 	backend, gpu := deps.Resolve(deps.Backend(cfg.Whisper.Backend))
+	installed, present := deps.InstalledBackend(whisperRoot(cfg))
 	fmt.Println("Transcription :")
 	fmt.Printf("  · GPU        : %s\n", gpu)
 	fmt.Printf("  · backend    : %s (whisper.backend = %q)\n", backend, cfg.Whisper.Backend)
+	switch {
+	case !present:
+		fmt.Println("  · build      : whisper.cpp n'est pas installé")
+	case installed == backend:
+		fmt.Printf("  · build      : whisper.cpp %s (installé)\n", installed)
+	default:
+		ok = false
+		fmt.Printf("  ✗ build      : whisper.cpp installé en %s, alors que le backend demandé est %s\n",
+			installed, backend)
+		fmt.Println("                 relancez « godio setup » pour installer la bonne version")
+	}
 	fmt.Printf("  · préréglage : %s (%s)\n", cfg.Whisper.Preset,
 		strings.Join(cfg.Whisper.Decoding(), " "))
 	fmt.Printf("  · threads    : %d (coeurs physiques)\n", cfg.Whisper.Threads)
@@ -239,7 +251,7 @@ func cmdSetup(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	root := filepath.Dir(filepath.Dir(cfg.Resolve(cfg.Whisper.Exe)))
+	root := whisperRoot(cfg)
 
 	fmt.Println("Recherche de la dernière version de whisper.cpp…")
 	plan, err := deps.MakePlan(ctx, root, deps.Backend(cfg.Whisper.Backend))
@@ -250,6 +262,9 @@ func cmdSetup(args []string) error {
 	fmt.Printf("  GPU      : %s\n", plan.GPU)
 	fmt.Printf("  backend  : %s\n", plan.Backend)
 	fmt.Printf("  version  : %s\n", plan.Release)
+	if plan.BackendMismatch() {
+		fmt.Printf("  ! le whisper.cpp installé est la version %s : il sera remplacé\n", plan.Installed)
+	}
 	if !plan.NeedsDownload() {
 		fmt.Println("\nTout est déjà installé.")
 		return nil
@@ -293,6 +308,11 @@ func cmdSetup(args []string) error {
 
 	fmt.Println("\nInstallation terminée. Vérifiez avec « godio doctor ».")
 	return nil
+}
+
+// whisperRoot returns the directory holding whisper/ and models/.
+func whisperRoot(cfg config.Config) string {
+	return filepath.Dir(filepath.Dir(cfg.Resolve(cfg.Whisper.Exe)))
 }
 
 // bar renders a 0..100 percentage as a fixed-width progress bar.
