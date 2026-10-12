@@ -26,8 +26,21 @@ type Plan struct {
 	WhisperSize int64
 	Speech      Model
 	VAD         Model
+	// Installed is the backend of the whisper build already on disk, empty
+	// when there is none.
+	Installed Backend
 	// Missing lists only the parts not already installed.
 	Missing []string
+	// replaceWhisper is set when a whisper build is present but is the wrong
+	// backend, so Install must overwrite it instead of keeping it.
+	replaceWhisper bool
+}
+
+// BackendMismatch reports whether the installed whisper build is not the one
+// the configuration asks for. Such an install keeps running on the CPU however
+// whisper.backend is set, so it is worth telling the user about.
+func (p Plan) BackendMismatch() bool {
+	return p.Installed != "" && p.Installed != p.Backend
 }
 
 // NeedsDownload reports whether anything is missing.
@@ -60,9 +73,16 @@ func MakePlan(ctx context.Context, dir string, want Backend) (Plan, error) {
 		VAD:         VADModel,
 	}
 
-	if !exists(filepath.Join(dir, "whisper", "whisper-cli.exe")) &&
-		!exists(filepath.Join(dir, "whisper", "whisper-cli")) {
+	installed, present := InstalledBackend(dir)
+	p.Installed = installed
+	switch {
+	case !present:
 		p.Missing = append(p.Missing, "whisper.cpp ("+rel.Tag+", "+humanSize(asset.Size)+")")
+	case installed != backend:
+		// The build on disk is the wrong one: replace it, or the GPU stays idle.
+		p.replaceWhisper = true
+		p.Missing = append(p.Missing, "whisper.cpp ("+rel.Tag+", "+humanSize(asset.Size)+
+			") — remplace l'installation "+string(installed))
 	}
 	if !exists(filepath.Join(dir, "models", p.Speech.Name)) {
 		p.Missing = append(p.Missing, p.Speech.Name)
@@ -84,8 +104,7 @@ func Install(ctx context.Context, dir string, p Plan, progress Progress) error {
 		return err
 	}
 
-	whisperExe := filepath.Join(dir, "whisper", "whisper-cli.exe")
-	if !exists(whisperExe) && !exists(strings.TrimSuffix(whisperExe, ".exe")) {
+	if _, present := InstalledBackend(dir); !present || p.replaceWhisper {
 		if err := installWhisper(ctx, dir, p, progress); err != nil {
 			return fmt.Errorf("installing whisper.cpp: %w", err)
 		}

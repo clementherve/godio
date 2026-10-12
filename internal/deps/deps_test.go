@@ -200,3 +200,47 @@ func TestHumanSize(t *testing.T) {
 		}
 	}
 }
+
+// TestInstalledBackend covers the three shapes of a whisper/ directory: absent,
+// a CPU build, and a CUDA build recognised by the runtime libraries beside the
+// executable.
+func TestInstalledBackend(t *testing.T) {
+	cases := []struct {
+		name    string
+		files   []string
+		want    Backend
+		present bool
+	}{
+		{"nothing", nil, "", false},
+		{"models only", []string{"models/ggml-large-v3-turbo.bin"}, "", false},
+		{"cpu build", []string{
+			"whisper/whisper-cli.exe", "whisper/ggml.dll", "whisper/ggml-cpu.dll", "whisper/SDL2.dll",
+		}, BackendCPU, true},
+		{"cuda build", []string{
+			"whisper/whisper-cli.exe", "whisper/ggml.dll", "whisper/ggml-cuda.dll",
+			"whisper/cudart64_12.dll", "whisper/cublas64_12.dll",
+		}, BackendCUDA, true},
+		{"unix cuda build", []string{
+			"whisper/whisper-cli", "whisper/libggml-cuda.so",
+		}, BackendCUDA, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, f := range tc.files {
+				path := filepath.Join(dir, filepath.FromSlash(f))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, present := InstalledBackend(dir)
+			if present != tc.present || got != tc.want {
+				t.Errorf("InstalledBackend = (%q, %v), want (%q, %v)", got, present, tc.want, tc.present)
+			}
+		})
+	}
+}
