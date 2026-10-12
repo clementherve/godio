@@ -128,7 +128,8 @@ compare two presets — without re-recording anything.
 ```
 
 With no argument these commands act on the most recent session; a session path
-can also be passed explicitly.
+can also be passed explicitly. `godio --help` lists the commands and
+`godio <command> --help` details one of them.
 
 ## Files
 

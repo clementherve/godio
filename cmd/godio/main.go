@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/urfave/cli/v3"
+
 	"github.com/clementherve/godio/internal/audio"
 	"github.com/clementherve/godio/internal/claudecli"
 	"github.com/clementherve/godio/internal/config"
@@ -28,65 +30,187 @@ import (
 // A local `go build` leaves it as "dev".
 var version = "dev"
 
-const usage = `godio — notes de réunion automatiques
-
-Usage:
-  godio run                  lance l'icône de notification (console attachée ;
-                             pour un usage normal lancez godio-tray.exe)
-  godio devices              liste les périphériques audio
-  godio doctor               vérifie la configuration et les dépendances
-  godio record [-s N]        enregistre (N secondes, ou Ctrl+C)
-  godio transcribe [session] transcrit les deux pistes
-  godio extract [session]    génère les notes via Claude
-  godio write [session]      ajoute les notes à la note du jour
-  godio process [session]    transcribe + extract + write
-  godio setup [--dry-run]    télécharge whisper.cpp et les modèles
-  godio config [edit]        affiche ou ouvre la configuration
-  godio version              affiche la version
-
-[session] est un dossier de session ; par défaut, le plus récent.
-`
-
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Print(usage)
-		os.Exit(2)
-	}
+	// One interrupt context for the whole process: every long-running command
+	// (recording, transcription, a 650 MB download) takes it, so Ctrl+C stops
+	// the work in progress rather than killing the binary mid-write.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
-	cmd, args := os.Args[1], os.Args[2:]
-	if err := run(cmd, args); err != nil {
+	if err := newApp().Run(ctx, os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "erreur :", err)
+		stop()
 		os.Exit(1)
 	}
 }
 
-func run(cmd string, args []string) error {
-	switch cmd {
-	case "run":
-		return cmdRun()
-
-	case "devices":
-		return cmdDevices()
-	case "doctor":
-		return cmdDoctor()
-	case "record":
-		return cmdRecord(args)
-	case "transcribe", "extract", "write", "process":
-		return cmdStage(cmd, args)
-	case "config":
-		return cmdConfig(args)
-	case "setup":
-		return cmdSetup(args)
-	case "version", "--version", "-v":
-		fmt.Printf("godio %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
-		return nil
-	case "-h", "--help", "help":
-		fmt.Print(usage)
-		return nil
-	default:
-		fmt.Print(usage)
-		return fmt.Errorf("commande inconnue %q", cmd)
+// newApp builds the command tree.
+//
+// The help text is the user manual, so the usage strings stay in French like
+// the rest of the interface.
+func newApp() *cli.Command {
+	app := &cli.Command{
+		Name:                  "godio",
+		Usage:                 "notes de réunion automatiques",
+		Version:               version,
+		Description:           "[session] est un dossier de session ; par défaut, le plus récent.",
+		Suggest:               true, // "godio doctr" should point at "doctor"
+		EnableShellCompletion: true,
+		// `godio` on its own is a usage error, not a successful run: it has
+		// always printed the command list and exited 2, and a script that tests
+		// the exit code should keep seeing that.
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if err := cli.ShowAppHelp(cmd); err != nil {
+				return err
+			}
+			return cli.Exit("", 2)
+		},
+		// Without this, an unknown command lands in urfave's help-topic path,
+		// which answers in English in an otherwise French interface and exits
+		// 3. Keep the message in French and the exit code at 1, as before.
+		// urfave's default prints "Incorrect Usage", then the whole help, and
+		// main then prints the error again. Return it untouched so a bad flag
+		// produces the same single « erreur : … » line as every other failure.
+		OnUsageError: func(_ context.Context, _ *cli.Command, err error, _ bool) error {
+			return err
+		},
+		CommandNotFound: func(_ context.Context, cmd *cli.Command, name string) {
+			fmt.Fprintf(os.Stderr, "erreur : commande inconnue %q\n", name)
+			fmt.Fprintf(os.Stderr, "Commandes : %s\n", strings.Join(commandNames(cmd), ", "))
+			fmt.Fprintln(os.Stderr, "« godio --help » pour le détail.")
+			cli.OsExiter(1)
+		},
+		Commands: []*cli.Command{
+			{
+				Name:  "run",
+				Usage: "lance l'icône de notification (console attachée ; pour un usage normal lancez godio-tray.exe)",
+				Action: func(context.Context, *cli.Command) error {
+					return cmdRun()
+				},
+			},
+			{
+				Name:  "devices",
+				Usage: "liste les périphériques audio",
+				Action: func(context.Context, *cli.Command) error {
+					return cmdDevices()
+				},
+			},
+			{
+				Name:  "doctor",
+				Usage: "vérifie la configuration et les dépendances",
+				Action: func(context.Context, *cli.Command) error {
+					return cmdDoctor()
+				},
+			},
+			{
+				Name:  "record",
+				Usage: "enregistre (N secondes, ou Ctrl+C)",
+				Flags: []cli.Flag{
+					&cli.IntFlag{
+						Name:    "seconds",
+						Aliases: []string{"s"},
+						Usage:   "arrête après `N` secondes (0 = jusqu'à Ctrl+C)",
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return cmdRecord(ctx, cmd.Int("seconds"))
+				},
+			},
+			stageCommand("transcribe", "transcrit les deux pistes"),
+			stageCommand("extract", "génère les notes via Claude"),
+			stageCommand("write", "ajoute les notes à la note du jour"),
+			stageCommand("process", "transcribe + extract + write"),
+			{
+				Name:  "setup",
+				Usage: "télécharge whisper.cpp et les modèles",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "dry-run",
+						Aliases: []string{"n"},
+						Usage:   "montre ce qui serait téléchargé, sans rien télécharger",
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return cmdSetup(ctx, cmd.Bool("dry-run"))
+				},
+			},
+			{
+				Name:  "config",
+				Usage: "affiche ou ouvre la configuration",
+				Action: func(context.Context, *cli.Command) error {
+					return cmdConfigShow()
+				},
+				Commands: []*cli.Command{
+					{
+						Name:  "edit",
+						Usage: "ouvre config.toml dans votre éditeur",
+						Action: func(context.Context, *cli.Command) error {
+							return cmdConfigEdit()
+						},
+					},
+				},
+			},
+			{
+				Name:  "version",
+				Usage: "affiche la version",
+				Action: func(context.Context, *cli.Command) error {
+					printVersion()
+					return nil
+				},
+			},
+		},
 	}
+
+	// OnUsageError is looked up on the command that failed, never inherited
+	// from the root, so it has to be attached to every node of the tree.
+	setUsageError(app, app.OnUsageError)
+	return app
+}
+
+// setUsageError attaches fn to cmd and to all of its descendants.
+func setUsageError(cmd *cli.Command, fn cli.OnUsageErrorFunc) {
+	cmd.OnUsageError = fn
+	for _, c := range cmd.Commands {
+		setUsageError(c, fn)
+	}
+}
+
+// commandNames lists the visible subcommands of cmd, for the unknown-command
+// message.
+func commandNames(cmd *cli.Command) []string {
+	names := make([]string, 0, len(cmd.Commands))
+	for _, c := range cmd.Commands {
+		if !c.Hidden {
+			names = append(names, c.Name)
+		}
+	}
+	return names
+}
+
+// stageCommand builds one of the four pipeline stages, which differ only by
+// name: each takes an optional session folder and nothing else.
+func stageCommand(stage, usage string) *cli.Command {
+	return &cli.Command{
+		Name:      stage,
+		Usage:     usage,
+		ArgsUsage: "[session]",
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return cmdStage(ctx, stage, cmd.Args().First())
+		},
+	}
+}
+
+// printVersion reports the build alongside the toolchain that produced it,
+// which is the first thing worth knowing about a cgo binary that someone else
+// compiled.
+func printVersion() {
+	fmt.Printf("godio %s (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+}
+
+func init() {
+	// urfave's default --version output is just the version string; keep the
+	// richer line the `version` command has always printed.
+	cli.VersionPrinter = func(*cli.Command) { printVersion() }
 }
 
 // load reads the config, reporting clearly when it was just scaffolded.
@@ -103,7 +227,8 @@ func load() (config.Config, error) {
 	return cfg, nil
 }
 
-func cmdConfig(args []string) error {
+// cmdConfigEdit opens config.toml, creating it first if this is a first run.
+func cmdConfigEdit() error {
 	path, err := config.Path()
 	if err != nil {
 		return err
@@ -111,8 +236,16 @@ func cmdConfig(args []string) error {
 	if _, err := load(); err != nil {
 		return err
 	}
-	if len(args) > 0 && args[0] == "edit" {
-		return openInEditor(path)
+	return openInEditor(path)
+}
+
+func cmdConfigShow() error {
+	path, err := config.Path()
+	if err != nil {
+		return err
+	}
+	if _, err := load(); err != nil {
+		return err
 	}
 	fmt.Println(path)
 	fmt.Println()
@@ -235,21 +368,11 @@ func cmdDoctor() error {
 }
 
 // cmdSetup downloads whisper.cpp and the models.
-func cmdSetup(args []string) error {
-	dryRun := false
-	for _, a := range args {
-		if a == "-n" || a == "--dry-run" {
-			dryRun = true
-		}
-	}
-
+func cmdSetup(ctx context.Context, dryRun bool) error {
 	cfg, err := load()
 	if err != nil {
 		return err
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 
 	root := whisperRoot(cfg)
 
@@ -352,20 +475,7 @@ func orDefault(s string) string {
 	return s
 }
 
-func cmdRecord(args []string) error {
-	seconds := 0
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-s" || args[i] == "--seconds" {
-			if i+1 >= len(args) {
-				return errors.New("-s attend un nombre de secondes")
-			}
-			if _, err := fmt.Sscanf(args[i+1], "%d", &seconds); err != nil {
-				return fmt.Errorf("durée invalide %q", args[i+1])
-			}
-			i++
-		}
-	}
-
+func cmdRecord(ctx context.Context, seconds int) error {
 	cfg, err := load()
 	if err != nil {
 		return err
@@ -379,8 +489,6 @@ func cmdRecord(args []string) error {
 	fmt.Printf("Enregistrement dans %s\n", sess.Dir)
 	fmt.Println("Ctrl+C pour arrêter.")
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	if seconds > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
@@ -502,13 +610,13 @@ func startRecording(cfg config.Config) (*audio.Recorder, *pipeline.Session, erro
 	return rec, sess, nil
 }
 
-func cmdStage(stage string, args []string) error {
+func cmdStage(ctx context.Context, stage, session string) error {
 	cfg, err := load()
 	if err != nil {
 		return err
 	}
 
-	sess, err := resolveSession(args)
+	sess, err := resolveSession(session)
 	if err != nil {
 		return err
 	}
@@ -524,9 +632,6 @@ func cmdStage(stage string, args []string) error {
 			}
 		},
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	switch stage {
 	case "transcribe":
 		text, err := p.Transcribe(ctx, sess)
@@ -557,11 +662,9 @@ func cmdStage(stage string, args []string) error {
 }
 
 // resolveSession takes an explicit session folder, or the most recent one.
-func resolveSession(args []string) (*pipeline.Session, error) {
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			return pipeline.OpenSession(a)
-		}
+func resolveSession(dir string) (*pipeline.Session, error) {
+	if dir != "" {
+		return pipeline.OpenSession(dir)
 	}
 	root, err := config.SessionsDir()
 	if err != nil {
