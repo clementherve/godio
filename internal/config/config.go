@@ -7,16 +7,26 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/klauspost/cpuid/v2"
 
 	"github.com/clementherve/godio/internal/assets"
+	"github.com/clementherve/godio/internal/lang"
 )
 
 // Config is the full user configuration, read from config.toml.
 type Config struct {
+	// Language is the interface language: "auto", "fr" or "en". It is
+	// declared first so the TOML encoder writes it above the tables, where a
+	// bare key has to go.
+	//
+	// It is the language of the menus and the messages, never the language of
+	// the notes: those follow whisper.language, because a French meeting is
+	// written up in French whatever the menus say.
+	Language string   `toml:"language"`
 	Obsidian Obsidian `toml:"obsidian"`
 	Audio    Audio    `toml:"audio"`
 	Whisper  Whisper  `toml:"whisper"`
@@ -149,11 +159,12 @@ func (d Duration) MarshalText() ([]byte, error) {
 // Default returns the configuration written on first run.
 func Default() Config {
 	return Config{
+		Language: "auto",
 		Obsidian: Obsidian{
 			Vault:       filepath.Join(userHome(), "Obsidian", "MyVault"),
 			DailyFolder: "Daily",
 			DateFormat:  "2006-01-02",
-			Heading:     "## Réunions",
+			Heading:     lang.T().Notes.DefaultHeading,
 		},
 		Audio: Audio{
 			SilenceDBFS:     -45,
@@ -230,12 +241,22 @@ func writeDefault(path string) error {
 }
 
 // header explains the file to whoever opens it, and warns that the tray
-// rewrites it.
-const header = `# Configuration de godio.
+// rewrites it. It follows the interface language, since it is prose.
+func header() string {
+	if lang.Current() == lang.FR {
+		return headerFR
+	}
+	return headerEN
+}
+
+const headerFR = `# Configuration de godio.
 #
 # Ce fichier est relu à chaque démarrage. L'icône de la zone de notification
 # peut le réécrire (menu Configuration), ce qui supprime les commentaires
 # ajoutés à la main.
+#
+#   language         auto | fr | en   (langue de l'interface, pas des notes :
+#                    les notes suivent whisper.language)
 #
 #   whisper.preset   fast | balanced | accurate   (vitesse <-> précision)
 #   whisper.backend  auto | cuda | cpu            (auto = CUDA si GPU NVIDIA)
@@ -260,6 +281,37 @@ const header = `# Configuration de godio.
 
 `
 
+const headerEN = `# godio configuration.
+#
+# This file is read at every start. The notification-area icon may rewrite it
+# (Configuration menu), which drops any comment added by hand.
+#
+#   language         auto | fr | en   (the interface language, not the notes':
+#                    notes follow whisper.language)
+#
+#   whisper.preset   fast | balanced | accurate   (speed <-> accuracy)
+#   whisper.backend  auto | cuda | cpu            (auto = CUDA when an NVIDIA GPU is present)
+#   whisper.threads  0 = one per physical core
+#
+#   claude.style     bullets | normal | detailed | eli5
+#                    (how dense and how plain the notes Claude writes are)
+#
+#   sessions.keep_audio_days  delete me.wav / them.wav after N days
+#                             (0 = never; the transcript and notes stay)
+#   sessions.keep_days        delete the whole session folder after N days
+#                             (0 = never). A meeting with no notes.md is never
+#                             deleted.
+#
+#   update.check_on_start  the tray checks at launch whether a newer version
+#                          exists (it never installs it)
+#   update.prerelease      include pre-releases in that comparison
+#
+#   audio.auto_stop          stop after this much silence on both sides
+#                            ("0s" = never)
+#   audio.auto_stop_warning  warning given before that stop ("0s" = none)
+
+`
+
 // writeTo writes a config atomically, so an interrupted write cannot leave an
 // unparseable config.toml behind.
 func writeTo(path string, c Config) error {
@@ -273,7 +325,7 @@ func writeTo(path string, c Config) error {
 	name := tmp.Name()
 	defer os.Remove(name)
 
-	if _, err := tmp.WriteString(header); err != nil {
+	if _, err := tmp.WriteString(header()); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -287,9 +339,45 @@ func writeTo(path string, c Config) error {
 	return os.Rename(name, path)
 }
 
+// NotesLang returns the language the notes are written in.
+//
+// It follows whisper.language — the language the meeting was held in — and not
+// the interface language: the vault, the names and the jargon in it are the
+// meeting's language, and translating on top of transcribing would add a layer
+// of drift between what was said and what is written down.
+func (c *Config) NotesLang() lang.Lang {
+	if strings.EqualFold(c.Whisper.Language, "fr") {
+		return lang.FR
+	}
+	return lang.EN
+}
+
+// LanguageSetting reads just the language key from config.toml, without
+// creating the file or validating anything else.
+//
+// The interface language has to be chosen before the command tree is built,
+// which happens before any command has loaded a configuration — so this is a
+// deliberately minimal read that cannot fail in a way worth reporting.
+func LanguageSetting() string {
+	path, err := Path()
+	if err != nil {
+		return ""
+	}
+	var only struct {
+		Language string `toml:"language"`
+	}
+	if _, err := toml.DecodeFile(path, &only); err != nil {
+		return ""
+	}
+	return only.Language
+}
+
 // normalise fills in anything a hand-edited config left blank or zeroed.
 func (c *Config) normalise() {
 	d := Default()
+	if c.Language == "" {
+		c.Language = d.Language
+	}
 	if c.Obsidian.DateFormat == "" {
 		c.Obsidian.DateFormat = d.Obsidian.DateFormat
 	}

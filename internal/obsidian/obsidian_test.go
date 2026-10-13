@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/clementherve/godio/internal/lang"
 	"time"
 )
 
@@ -150,7 +152,7 @@ func TestAppendCreatesFileAndIsAtomic(t *testing.T) {
 func TestAppendPreservesAccents(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "2026-10-08.md")
-	body := "**Résumé** : révision du budget, créé par Clément. Déjà validé à 100 %."
+	body := "**Résumé** : révision du budget, créé par Moi. Déjà validé à 100 %."
 
 	if err := Append(path, "## Réunions", entry("Réunion été", body)); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -165,8 +167,10 @@ func TestAppendPreservesAccents(t *testing.T) {
 }
 
 func TestInsertEmptyTitleFallsBack(t *testing.T) {
+	// The fallback word is translated, so the assertion asks the catalogue
+	// rather than hard-coding one language's answer.
 	got := Insert("", "## Réunions", entry("", "corps"))
-	if !strings.Contains(got, "### 14:30 — Réunion") {
+	if !strings.Contains(got, "### 14:30 — "+lang.T().Notes.Meeting) {
 		t.Errorf("no fallback title:\n%q", got)
 	}
 }

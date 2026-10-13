@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/clementherve/godio/internal/lang"
 )
 
 // GPU describes the NVIDIA GPU found on this machine, if any.
@@ -18,7 +20,7 @@ type GPU struct {
 // String renders the GPU for doctor output.
 func (g GPU) String() string {
 	if !g.Present {
-		return "aucun GPU NVIDIA détecté"
+		return lang.T().Err.NoGPU
 	}
 	if g.Driver > 0 {
 		return g.Name + " (pilote " + strconv.FormatFloat(g.Driver, 'f', -1, 64) + ")"

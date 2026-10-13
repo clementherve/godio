@@ -2,6 +2,8 @@ package transcript
 
 import (
 	"testing"
+
+	"github.com/clementherve/godio/internal/lang"
 	"time"
 )
 
@@ -95,8 +97,15 @@ func TestFormat(t *testing.T) {
 	}
 
 	want := "[00:00:12] Moi: bonjour\n[01:02:05] Interlocuteur: très bien\n"
-	if got := Format(segs); got != want {
+	if got := Format(segs, LabelsFor(lang.FR)); got != want {
 		t.Errorf("Format() =\n%q\nwant\n%q", got, want)
+	}
+
+	// The labels are the only part that is translated; the timeline and the
+	// text are not.
+	wantEN := "[00:00:12] Me: bonjour\n[01:02:05] Them: très bien\n"
+	if got := Format(segs, LabelsFor(lang.EN)); got != wantEN {
+		t.Errorf("Format(EN) =\n%q\nwant\n%q", got, wantEN)
 	}
 }
 
@@ -115,7 +124,7 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("Words = %d, want 5", st.Words)
 	}
 	if st.BySpeaker[Me] != 3 || st.BySpeaker[Them] != 2 {
-		t.Errorf("BySpeaker = %v, want Moi:3 Interlocuteur:2", st.BySpeaker)
+		t.Errorf("BySpeaker = %v, want me:3 them:2", st.BySpeaker)
 	}
 	if want := 9 * time.Second; st.Duration != want {
 		t.Errorf("Duration = %v, want %v", st.Duration, want)
@@ -126,7 +135,7 @@ func TestMergeEmpty(t *testing.T) {
 	if got := Merge(nil, nil, 0, 0); len(got) != 0 {
 		t.Errorf("Merge(nil, nil) = %+v, want empty", got)
 	}
-	if got := Format(nil); got != "" {
+	if got := Format(nil, LabelsFor(lang.EN)); got != "" {
 		t.Errorf("Format(nil) = %q, want empty", got)
 	}
 }

@@ -2,6 +2,8 @@
 // processed, so you can start a recording and walk away from the machine.
 package notify
 
+import "github.com/clementherve/godio/internal/lang"
+
 // Notifier shows desktop notifications.
 type Notifier struct {
 	// AppID is what Windows shows as the notification's source.
@@ -20,5 +22,5 @@ func (n Notifier) Done(title, body string) {
 // transcription dies twenty minutes after you walked away, a silent failure is
 // the worst outcome.
 func (n Notifier) Failed(body string) {
-	n.push("godio — échec", body)
+	n.push(lang.T().Tray.FailedTitle, body)
 }

@@ -1,0 +1,255 @@
+// Code generated from the string mapping; edit the catalogues, not a
+// generator. Each group holds one area of the interface.
+
+package lang
+
+// CLIStrings covers the command-line interface: usage lines, flag help and everything godio prints.
+type CLIStrings struct {
+	AppUsage              string
+	AppDescription        string
+	UsageRun              string
+	UsageDevices          string
+	UsageDoctor           string
+	UsageRecord           string
+	UsageSeconds          string
+	UsageTranscribe       string
+	UsageExtract          string
+	UsageWrite            string
+	UsageProcess          string
+	UsagePurge            string
+	UsageDryRunPurge      string
+	UsageKeepDays         string
+	UsageKeepAudioDays    string
+	UsageSetup            string
+	UsageDryRunSetup      string
+	UsageConfig           string
+	UsageConfigEdit       string
+	UsageUpdate           string
+	UsageCheck            string
+	UsagePrerelease       string
+	UsageForce            string
+	UsageVersion          string
+	UsageDay              string
+	UsageStylePrefix      string
+	UsageStyleSuffix      string
+	SeeHelp               string
+	CommandsFmt           string
+	InputsHeading         string
+	OutputsHeading        string
+	NoDevices             string
+	DefaultDevice         string
+	SessionFmt            string
+	SessionBlankFmt       string
+	RecordingInFmt        string
+	CtrlCToStop           string
+	Live                  string
+	MetersFmt             string
+	StoppingInFmt         string
+	AutoStoppedFmt        string
+	AutoStopSilenceFmt    string
+	NextStepFmt           string
+	TrackLineFmt          string
+	InstalledVersionFmt   string
+	LookingForLatest      string
+	LatestVersionFmt      string
+	UpdateAvailableFmt    string
+	LocalBuildNoCompare   string
+	UpToDate              string
+	InstallingIntoFmt     string
+	RestartTray           string
+	LookingForWhisper     string
+	WhisperWillReplaceFmt string
+	AllInstalled          string
+	ToDownload            string
+	DryRunNothing         string
+	InstallDone           string
+	NoRetention           string
+	TryPurge              string
+	NothingToDelete       string
+	Deleted               string
+	WouldDelete           string
+	Freed                 string
+	WouldFree             string
+	PurgeAudioFmt         string
+	PurgeSessionFmt       string
+	PurgeFreedFmt         string
+	PurgeKeptFmt          string
+	UpdatedFmt            string
+	ProcessedFmt          string
+	ErrorPrefix           string
+	UnknownCommandFmt     string
+	ConfigCreatedFmt      string
+}
+
+// TrayStrings covers the notification-area icon: menu items, status lines and toasts.
+type TrayStrings struct {
+	Start                  string
+	Stop                   string
+	Processing             string
+	Ready                  string
+	TooltipReady           string
+	TooltipPrefix          string
+	TooltipProgressFmt     string
+	MicMenu                string
+	MicTooltip             string
+	OutMenu                string
+	OutTooltip             string
+	DefaultSuffix          string
+	StopToChangeDevice     string
+	ConfigMenu             string
+	PickVault              string
+	PickVaultTitle         string
+	VaultPrefix            string
+	OpenConfig             string
+	Reload                 string
+	Reloaded               string
+	StyleMenu              string
+	StyleTooltip           string
+	StylePrefix            string
+	StyleBullets           string
+	StyleNormal            string
+	StyleDetailed          string
+	StyleELI5              string
+	Setup                  string
+	Update                 string
+	UpdateTooltip          string
+	UpdatePrefix           string
+	Restart                string
+	RestartTooltip         string
+	OpenNote               string
+	OpenFolder             string
+	Quit                   string
+	LevelsFmt              string
+	LevelsTooltipFmt       string
+	SilenceCountdownFmt    string
+	SilenceTooltipFmt      string
+	SilenceTitle           string
+	SilenceBodyFmt         string
+	AutoStoppedPrefix      string
+	OfSilence              string
+	AutoStopTitle          string
+	AutoStopBodyFmt        string
+	NotesAdded             string
+	NotesAddedActionsFmt   string
+	ProcessedTitle         string
+	ProcessedBodyFmt       string
+	Busy                   string
+	LookingForDeps         string
+	DepsAlreadyPrefix      string
+	DepsInstalledPrefix    string
+	DepsDoneTitle          string
+	DepsDoneBody1          string
+	DepsDoneBody2          string
+	ProgressMBFmt          string
+	LookingForUpdate       string
+	UpToDatePrefix         string
+	VersionPrefix          string
+	AvailableSuffix        string
+	UpdateAvailableTitle   string
+	UpdateAvailableBodyFmt string
+	GodioPrefix            string
+	InstalledSuffix        string
+	RestartToUsePrefix     string
+	UpdateDoneTitle        string
+	UpdateDoneBodyFmt      string
+	UpdateErrPrefix        string
+	PurgeErrPrefix         string
+	PurgeDoneFmt           string
+	FailedTitle            string
+	FirstRunTitle          string
+	FirstRunBodyFmt        string
+}
+
+// DoctorStrings covers the `godio doctor` report.
+type DoctorStrings struct {
+	VersionLineFmt       string
+	LocalBuildNote       string
+	HeadingConfig        string
+	HeadingTranscription string
+	HeadingClaude        string
+	HeadingSessions      string
+	HeadingAudio         string
+	GPUFmt               string
+	BackendFmt           string
+	BuildMissing         string
+	BuildInstalledFmt    string
+	BuildMismatchFmt     string
+	BuildMismatchFix     string
+	PresetFmt            string
+	ThreadsFmt           string
+	GPUIdle              string
+	ModelFmt             string
+	StyleFmt             string
+	FolderFmt            string
+	RetentionAudioFmt    string
+	RetentionSessionsFmt string
+	KeptMasc             string
+	KeptFem              string
+	KeptForever          string
+	KeptDaysFmt          string
+	AutoStopFmt          string
+	NoWarning            string
+	WarningPrefix        string
+	AutoStopOff          string
+	AudioBackend         string
+	InputDevices         string
+	OutputDevices        string
+	MicFmt               string
+	OutputFmt            string
+	AllGood              string
+	LanguageFmt          string
+}
+
+// ErrStrings covers messages that reach the user as an error.
+type ErrStrings struct {
+	IncompleteConfig    string
+	UnknownStyleFmt     string
+	DayAndSession       string
+	MicFmt              string
+	OutputFmt           string
+	StopRecordingFmt    string
+	EmptyDate           string
+	BadDateFmt          string
+	NoSessionOnDayFmt   string
+	NoGPU               string
+	DialogCancelled     string
+	PickerWindowsOnly   string
+	NotPublic1          string
+	NotPublic2          string
+	NotPublic3          string
+	RateLimited         string
+	GitHubQueryFmtW     string
+	GitHubQueryFmtS     string
+	GitHubUnreadableFmt string
+	NoRelease           string
+	WindowsOnlyFmt      string
+	ReleaseMissingFmt   string
+	NoBinariesFmt       string
+	NoLocalBinaryFmt    string
+	DownloadFmtW        string
+	DownloadFmtS        string
+	BadDigestFmt        string
+	NoDigestFmt         string
+	UnreadableDigestFmt string
+	WriteDenied1Fmt     string
+	WriteDenied2Fmt     string
+	StagingFmt          string
+	SetupFirstFmt       string
+}
+
+// NotesStrings covers the pipeline's progress lines and the words godio writes into the vault.
+type NotesStrings struct {
+	MeetingPrefix       string
+	Meeting             string
+	DefaultHeading      string
+	TrackMic            string
+	TrackSystem         string
+	TranscribingFmt     string
+	TranscribedTrackFmt string
+	TranscribedFmt      string
+	ExtractingFmt       string
+	AppendedFmt         string
+	Done                string
+	StageTranscription  string
+	StageExtraction     string
+}

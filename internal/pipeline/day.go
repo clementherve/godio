@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/clementherve/godio/internal/lang"
 )
 
 // dayLayout is the date part of a session folder name, which is
@@ -28,7 +31,7 @@ func ParseDay(s string, now time.Time) (time.Time, error) {
 
 	switch v {
 	case "":
-		return time.Time{}, fmt.Errorf("date vide")
+		return time.Time{}, errors.New(lang.T().Err.EmptyDate)
 	case "today", "aujourd'hui", "aujourdhui":
 		return midnight(now), nil
 	case "yesterday", "hier":
@@ -44,7 +47,7 @@ func ParseDay(s string, now time.Time) (time.Time, error) {
 
 	d, err := time.ParseInLocation(dayLayout, v, now.Location())
 	if err != nil {
-		return time.Time{}, fmt.Errorf("date %q non comprise (attendu AAAA-MM-JJ, « hier », ou « -2 »)", s)
+		return time.Time{}, fmt.Errorf(lang.T().Err.BadDateFmt, s)
 	}
 	return d, nil
 }
@@ -68,7 +71,7 @@ func OnDay(root string, day time.Time) ([]*Session, error) {
 		}
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("aucune session le %s", prefix)
+		return nil, fmt.Errorf(lang.T().Err.NoSessionOnDayFmt, prefix)
 	}
 	sort.Strings(names)
 

@@ -118,8 +118,12 @@ func TestDownloadVerifiesDigest(t *testing.T) {
 	if err == nil {
 		t.Fatal("a corrupted download was accepted")
 	}
-	if !strings.Contains(err.Error(), "empreinte") {
-		t.Errorf("unhelpful error for a bad digest: %v", err)
+	// The message is translated, so assert on what must be in it whatever the
+	// language: the file and both digests.
+	for _, want := range []string{"godio.exe", "000000000000", hex.EncodeToString(sum[:])[:12]} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("a bad-digest error that does not mention %s: %v", want, err)
+		}
 	}
 }
 

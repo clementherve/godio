@@ -21,6 +21,7 @@ import (
 	"github.com/clementherve/godio/internal/claudecli"
 	"github.com/clementherve/godio/internal/config"
 	"github.com/clementherve/godio/internal/deps"
+	"github.com/clementherve/godio/internal/lang"
 	"github.com/clementherve/godio/internal/pipeline"
 	"github.com/clementherve/godio/internal/selfupdate"
 )
@@ -39,6 +40,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	// The language has to be settled before newApp() builds the command tree,
+	// since every usage string is read out of the catalogue as it does.
+	lang.Use(lang.Resolve(config.LanguageSetting()))
+
 	// A previous update left the binary it replaced behind, because a running
 	// executable cannot delete itself. This launch is the first chance to.
 	if dir, err := selfupdate.InstallDir(); err == nil {
@@ -46,7 +51,7 @@ func main() {
 	}
 
 	if err := newApp().Run(ctx, os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, "erreur :", err)
+		fmt.Fprintln(os.Stderr, lang.T().CLI.ErrorPrefix, err)
 		stop()
 		os.Exit(1)
 	}
@@ -59,9 +64,9 @@ func main() {
 func newApp() *cli.Command {
 	app := &cli.Command{
 		Name:                  "godio",
-		Usage:                 "notes de réunion automatiques",
+		Usage:                 lang.T().CLI.AppUsage,
 		Version:               version,
-		Description:           "[session] est un dossier de session ; par défaut, le plus récent.",
+		Description:           lang.T().CLI.AppDescription,
 		Suggest:               true, // "godio doctr" should point at "doctor"
 		EnableShellCompletion: true,
 		// `godio` on its own is a usage error, not a successful run: it has
@@ -83,68 +88,68 @@ func newApp() *cli.Command {
 			return err
 		},
 		CommandNotFound: func(_ context.Context, cmd *cli.Command, name string) {
-			fmt.Fprintf(os.Stderr, "erreur : commande inconnue %q\n", name)
-			fmt.Fprintf(os.Stderr, "Commandes : %s\n", strings.Join(commandNames(cmd), ", "))
-			fmt.Fprintln(os.Stderr, "« godio --help » pour le détail.")
+			fmt.Fprintf(os.Stderr, lang.T().CLI.UnknownCommandFmt, name)
+			fmt.Fprintf(os.Stderr, lang.T().CLI.CommandsFmt, strings.Join(commandNames(cmd), ", "))
+			fmt.Fprintln(os.Stderr, lang.T().CLI.SeeHelp)
 			cli.OsExiter(1)
 		},
 		Commands: []*cli.Command{
 			{
 				Name:  "run",
-				Usage: "lance l'icône de notification (console attachée ; pour un usage normal lancez godio-tray.exe)",
+				Usage: lang.T().CLI.UsageRun,
 				Action: func(context.Context, *cli.Command) error {
 					return cmdRun()
 				},
 			},
 			{
 				Name:  "devices",
-				Usage: "liste les périphériques audio",
+				Usage: lang.T().CLI.UsageDevices,
 				Action: func(context.Context, *cli.Command) error {
 					return cmdDevices()
 				},
 			},
 			{
 				Name:  "doctor",
-				Usage: "vérifie la configuration et les dépendances",
+				Usage: lang.T().CLI.UsageDoctor,
 				Action: func(context.Context, *cli.Command) error {
 					return cmdDoctor()
 				},
 			},
 			{
 				Name:  "record",
-				Usage: "enregistre (N secondes, ou Ctrl+C)",
+				Usage: lang.T().CLI.UsageRecord,
 				Flags: []cli.Flag{
 					&cli.IntFlag{
 						Name:    "seconds",
 						Aliases: []string{"s"},
-						Usage:   "arrête après `N` secondes (0 = jusqu'à Ctrl+C)",
+						Usage:   lang.T().CLI.UsageSeconds,
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					return cmdRecord(ctx, cmd.Int("seconds"))
 				},
 			},
-			stageCommand("transcribe", "transcrit les deux pistes"),
-			stageCommand("extract", "génère les notes via Claude", styleFlag()),
-			stageCommand("write", "ajoute les notes à la note du jour"),
-			stageCommand("process", "transcribe + extract + write", styleFlag()),
+			stageCommand("transcribe", lang.T().CLI.UsageTranscribe),
+			stageCommand("extract", lang.T().CLI.UsageExtract, styleFlag()),
+			stageCommand("write", lang.T().CLI.UsageWrite),
+			stageCommand("process", lang.T().CLI.UsageProcess, styleFlag()),
 			{
 				Name:      "purge",
-				Usage:     "supprime les vieilles sessions selon [sessions] du config.toml",
+				Usage:     lang.T().CLI.UsagePurge,
 				ArgsUsage: " ",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
 						Name:    "dry-run",
 						Aliases: []string{"n"},
-						Usage:   "montre ce qui serait supprimé, sans rien supprimer",
+						Usage:   lang.T().CLI.UsageDryRunPurge,
 					},
 					&cli.IntFlag{
 						Name:  "keep-days",
-						Usage: "remplace sessions.keep_days pour cette exécution",
+						Usage: lang.T().CLI.UsageKeepDays,
 					},
 					&cli.IntFlag{
 						Name:  "keep-audio-days",
-						Usage: "remplace sessions.keep_audio_days pour cette exécution",
+						Usage: lang.T().CLI.UsageKeepAudioDays,
 					},
 				},
 				Action: func(_ context.Context, cmd *cli.Command) error {
@@ -153,12 +158,12 @@ func newApp() *cli.Command {
 			},
 			{
 				Name:  "setup",
-				Usage: "télécharge whisper.cpp et les modèles",
+				Usage: lang.T().CLI.UsageSetup,
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
 						Name:    "dry-run",
 						Aliases: []string{"n"},
-						Usage:   "montre ce qui serait téléchargé, sans rien télécharger",
+						Usage:   lang.T().CLI.UsageDryRunSetup,
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -167,14 +172,14 @@ func newApp() *cli.Command {
 			},
 			{
 				Name:  "config",
-				Usage: "affiche ou ouvre la configuration",
+				Usage: lang.T().CLI.UsageConfig,
 				Action: func(context.Context, *cli.Command) error {
 					return cmdConfigShow()
 				},
 				Commands: []*cli.Command{
 					{
 						Name:  "edit",
-						Usage: "ouvre config.toml dans votre éditeur",
+						Usage: lang.T().CLI.UsageConfigEdit,
 						Action: func(context.Context, *cli.Command) error {
 							return cmdConfigEdit()
 						},
@@ -183,20 +188,20 @@ func newApp() *cli.Command {
 			},
 			{
 				Name:  "update",
-				Usage: "met à jour godio depuis GitHub",
+				Usage: lang.T().CLI.UsageUpdate,
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
 						Name:    "check",
 						Aliases: []string{"c"},
-						Usage:   "indique s'il existe une version plus récente, sans rien installer",
+						Usage:   lang.T().CLI.UsageCheck,
 					},
 					&cli.BoolFlag{
 						Name:  "prerelease",
-						Usage: "considère aussi les pré-versions",
+						Usage: lang.T().CLI.UsagePrerelease,
 					},
 					&cli.BoolFlag{
 						Name:  "force",
-						Usage: "installe même si la version actuelle est déjà à jour, ou est un build local",
+						Usage: lang.T().CLI.UsageForce,
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -205,7 +210,7 @@ func newApp() *cli.Command {
 			},
 			{
 				Name:  "version",
-				Usage: "affiche la version",
+				Usage: lang.T().CLI.UsageVersion,
 				Action: func(context.Context, *cli.Command) error {
 					printVersion()
 					return nil
@@ -262,7 +267,7 @@ func dayFlag() cli.Flag {
 	return &cli.StringFlag{
 		Name:    "day",
 		Aliases: []string{"d"},
-		Usage:   "toutes les sessions d'un jour : `AAAA-MM-JJ`, « hier », ou « -2 »",
+		Usage:   lang.T().CLI.UsageDay,
 	}
 }
 
@@ -272,7 +277,7 @@ func dayFlag() cli.Flag {
 func styleFlag() cli.Flag {
 	return &cli.StringFlag{
 		Name:  "style",
-		Usage: "style des notes : " + strings.Join(assets.Styles, " | ") + " (défaut : claude.style)",
+		Usage: lang.T().CLI.UsageStylePrefix + strings.Join(assets.Styles, " | ") + lang.T().CLI.UsageStyleSuffix,
 	}
 }
 
@@ -289,22 +294,22 @@ func cmdUpdate(ctx context.Context, check, prerelease, force bool) error {
 		prerelease = true
 	}
 
-	fmt.Printf("Version installée : %s\n", version)
-	fmt.Println("Recherche de la dernière version…")
+	fmt.Printf(lang.T().CLI.InstalledVersionFmt, version)
+	fmt.Println(lang.T().CLI.LookingForLatest)
 
 	avail, err := selfupdate.Check(ctx, version, prerelease)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Dernière version   : %s\n", avail.Latest)
+	fmt.Printf(lang.T().CLI.LatestVersionFmt, avail.Latest)
 
 	switch {
 	case avail.Newer:
-		fmt.Printf("Une mise à jour est disponible (%s).\n", avail.HumanSize())
+		fmt.Printf(lang.T().CLI.UpdateAvailableFmt, avail.HumanSize())
 	case selfupdate.IsDev(version):
-		fmt.Println("Build local : aucune comparaison possible (« --force » pour installer quand même).")
+		fmt.Println(lang.T().CLI.LocalBuildNoCompare)
 	default:
-		fmt.Println("godio est à jour.")
+		fmt.Println(lang.T().CLI.UpToDate)
 	}
 
 	if check {
@@ -321,7 +326,7 @@ func cmdUpdate(ctx context.Context, check, prerelease, force bool) error {
 	// Left over from a previous update: sweep before taking more space.
 	selfupdate.CleanupOld(dir)
 
-	fmt.Printf("Installation dans %s\n", dir)
+	fmt.Printf(lang.T().CLI.InstallingIntoFmt, dir)
 	applied, err := selfupdate.Apply(ctx, avail, dir, func(stage string, done, total int64) {
 		if total <= 0 {
 			fmt.Printf("\r  %-16s %d Mo", stage, done/(1<<20))
@@ -337,10 +342,10 @@ func cmdUpdate(ctx context.Context, check, prerelease, force bool) error {
 		return err
 	}
 
-	fmt.Printf("\n%s → %s : %s\n", applied.From, applied.To, strings.Join(applied.Replaced, ", "))
+	fmt.Printf(lang.T().CLI.UpdatedFmt, applied.From, applied.To, strings.Join(applied.Replaced, ", "))
 	// The running process still holds the old code; nothing it does from here
 	// reflects the update.
-	fmt.Println("Redémarrez godio-tray.exe pour utiliser la nouvelle version.")
+	fmt.Println(lang.T().CLI.RestartTray)
 	return nil
 }
 
@@ -366,7 +371,7 @@ func load() (config.Config, error) {
 	if created {
 		path, _ := config.Path()
 		fmt.Fprintf(os.Stderr,
-			"Configuration créée : %s\nRenseignez le chemin de votre coffre Obsidian, puis relancez.\n\n", path)
+			lang.T().CLI.ConfigCreatedFmt, path)
 	}
 	return cfg, nil
 }
@@ -417,17 +422,17 @@ func cmdDevices() error {
 		return err
 	}
 
-	fmt.Println("Entrées (micro) — audio.mic_device :")
+	fmt.Println(lang.T().CLI.InputsHeading)
 	printDevices(capture)
 	fmt.Println()
-	fmt.Println("Sorties (capturées en loopback) — audio.loopback_device :")
+	fmt.Println(lang.T().CLI.OutputsHeading)
 	printDevices(playback)
 	return nil
 }
 
 func printDevices(devs []audio.Device) {
 	if len(devs) == 0 {
-		fmt.Println("  (aucun)")
+		fmt.Println(lang.T().CLI.NoDevices)
 		return
 	}
 	for _, d := range devs {
@@ -455,94 +460,104 @@ func cmdDoctor() error {
 		fmt.Printf("  ✓ %s\n", label)
 	}
 
-	fmt.Printf("godio %s", version)
+	fmt.Printf(lang.T().Doctor.VersionLineFmt, version)
 	if selfupdate.IsDev(version) {
-		fmt.Print(" (build local — « godio update » ne s'applique qu'aux versions publiées)")
+		fmt.Print(lang.T().Doctor.LocalBuildNote)
 	}
 	fmt.Println()
 	fmt.Println()
 
-	fmt.Println("Configuration :")
+	fmt.Println(lang.T().Doctor.HeadingConfig)
 	report("config", cfg.Validate())
+	fmt.Printf(lang.T().Doctor.LanguageFmt, languageLine(cfg.Language))
 
 	backend, gpu := deps.Resolve(deps.Backend(cfg.Whisper.Backend))
 	installed, present := deps.InstalledBackend(whisperRoot(cfg))
-	fmt.Println("Transcription :")
-	fmt.Printf("  · GPU        : %s\n", gpu)
-	fmt.Printf("  · backend    : %s (whisper.backend = %q)\n", backend, cfg.Whisper.Backend)
+	fmt.Println(lang.T().Doctor.HeadingTranscription)
+	fmt.Printf(lang.T().Doctor.GPUFmt, gpu)
+	fmt.Printf(lang.T().Doctor.BackendFmt, backend, cfg.Whisper.Backend)
 	switch {
 	case !present:
-		fmt.Println("  · build      : whisper.cpp n'est pas installé")
+		fmt.Println(lang.T().Doctor.BuildMissing)
 	case installed == backend:
-		fmt.Printf("  · build      : whisper.cpp %s (installé)\n", installed)
+		fmt.Printf(lang.T().Doctor.BuildInstalledFmt, installed)
 	default:
 		ok = false
-		fmt.Printf("  ✗ build      : whisper.cpp installé en %s, alors que le backend demandé est %s\n",
+		fmt.Printf(lang.T().Doctor.BuildMismatchFmt,
 			installed, backend)
-		fmt.Println("                 relancez « godio setup » pour installer la bonne version")
+		fmt.Println(lang.T().Doctor.BuildMismatchFix)
 	}
-	fmt.Printf("  · préréglage : %s (%s)\n", cfg.Whisper.Preset,
+	fmt.Printf(lang.T().Doctor.PresetFmt, cfg.Whisper.Preset,
 		strings.Join(cfg.Whisper.Decoding(), " "))
-	fmt.Printf("  · threads    : %d (coeurs physiques)\n", cfg.Whisper.Threads)
+	fmt.Printf(lang.T().Doctor.ThreadsFmt, cfg.Whisper.Threads)
 	if backend == deps.BackendCPU && gpu.Present {
-		fmt.Println("  ! un GPU NVIDIA est présent mais whisper.backend force le CPU")
+		fmt.Println(lang.T().Doctor.GPUIdle)
 	}
 
-	fmt.Println("Claude Code :")
+	fmt.Println(lang.T().Doctor.HeadingClaude)
 	report("claude", claudecli.Runner{Executable: cfg.Claude.Executable}.Check())
-	fmt.Printf("  · modèle     : %s\n", cfg.Claude.Model)
-	fmt.Printf("  · style      : %s (claude.style)\n", cfg.Claude.Style)
+	fmt.Printf(lang.T().Doctor.ModelFmt, cfg.Claude.Model)
+	fmt.Printf(lang.T().Doctor.StyleFmt, cfg.Claude.Style)
 
-	fmt.Println("Sessions :")
+	fmt.Println(lang.T().Doctor.HeadingSessions)
 	if root, err := config.SessionsDir(); err == nil {
-		fmt.Printf("  · dossier    : %s\n", root)
+		fmt.Printf(lang.T().Doctor.FolderFmt, root)
 	}
-	fmt.Printf("  · audio      : %s\n", retentionLine(cfg.Sessions.KeepAudioDays, "conservé"))
-	fmt.Printf("  · sessions   : %s\n", retentionLine(cfg.Sessions.KeepDays, "conservées"))
+	fmt.Printf(lang.T().Doctor.RetentionAudioFmt, retentionLine(cfg.Sessions.KeepAudioDays, lang.T().Doctor.KeptMasc))
+	fmt.Printf(lang.T().Doctor.RetentionSessionsFmt, retentionLine(cfg.Sessions.KeepDays, lang.T().Doctor.KeptFem))
 
-	fmt.Println("Audio :")
+	fmt.Println(lang.T().Doctor.HeadingAudio)
 	if d := cfg.Audio.AutoStop.Duration; d > 0 {
-		warn := "sans préavis"
+		warn := lang.T().Doctor.NoWarning
 		if w := cfg.Audio.AutoStopWarning.Duration; w > 0 {
-			warn = "préavis " + w.String()
+			warn = lang.T().Doctor.WarningPrefix + w.String()
 		}
-		fmt.Printf("  · arrêt auto : après %s de silence (%s)\n", d, warn)
+		fmt.Printf(lang.T().Doctor.AutoStopFmt, d, warn)
 	} else {
-		fmt.Println("  · arrêt auto : désactivé (audio.auto_stop = \"0s\")")
+		fmt.Println(lang.T().Doctor.AutoStopOff)
 	}
 	actx, err := audio.NewContext()
 	if err != nil {
-		report("backend audio", err)
+		report(lang.T().Doctor.AudioBackend, err)
 	} else {
 		defer actx.Close()
 		capture, cerr := actx.CaptureDevices()
-		report("périphériques d'entrée", cerr)
+		report(lang.T().Doctor.InputDevices, cerr)
 		if cerr == nil {
 			_, e := audio.Find(capture, cfg.Audio.MicDevice)
-			report(fmt.Sprintf("micro (%s)", orDefault(cfg.Audio.MicDevice)), e)
+			report(fmt.Sprintf(lang.T().Doctor.MicFmt, orDefault(cfg.Audio.MicDevice)), e)
 		}
 		playback, perr := actx.PlaybackDevices()
-		report("périphériques de sortie", perr)
+		report(lang.T().Doctor.OutputDevices, perr)
 		if perr == nil {
 			_, e := audio.Find(playback, cfg.Audio.LoopbackDevice)
-			report(fmt.Sprintf("sortie (%s)", orDefault(cfg.Audio.LoopbackDevice)), e)
+			report(fmt.Sprintf(lang.T().Doctor.OutputFmt, orDefault(cfg.Audio.LoopbackDevice)), e)
 		}
 	}
 
 	if !ok {
-		return errors.New("configuration incomplète — lancez « godio setup » pour installer les dépendances")
+		return errors.New(lang.T().Err.IncompleteConfig)
 	}
-	fmt.Println("\nTout est prêt.")
+	fmt.Println(lang.T().Doctor.AllGood)
 	return nil
+}
+
+// languageLine says which language is in use and where that came from, since
+// "auto" on its own does not tell you what it resolved to.
+func languageLine(setting string) string {
+	if resolved := lang.Current(); setting != string(resolved) {
+		return setting + " → " + string(resolved)
+	}
+	return setting
 }
 
 // retentionLine describes one half of the retention policy in words, since
 // "0" on its own reads like "delete immediately" rather than "keep forever".
 func retentionLine(days int, kept string) string {
 	if days <= 0 {
-		return kept + " indéfiniment (0)"
+		return kept + lang.T().Doctor.KeptForever
 	}
-	return fmt.Sprintf("%s %d jour(s)", kept, days)
+	return fmt.Sprintf(lang.T().Doctor.KeptDaysFmt, kept, days)
 }
 
 // cmdSetup downloads whisper.cpp and the models.
@@ -554,7 +569,7 @@ func cmdSetup(ctx context.Context, dryRun bool) error {
 
 	root := whisperRoot(cfg)
 
-	fmt.Println("Recherche de la dernière version de whisper.cpp…")
+	fmt.Println(lang.T().CLI.LookingForWhisper)
 	plan, err := deps.MakePlan(ctx, root, deps.Backend(cfg.Whisper.Backend))
 	if err != nil {
 		return err
@@ -564,20 +579,20 @@ func cmdSetup(ctx context.Context, dryRun bool) error {
 	fmt.Printf("  backend  : %s\n", plan.Backend)
 	fmt.Printf("  version  : %s\n", plan.Release)
 	if plan.BackendMismatch() {
-		fmt.Printf("  ! le whisper.cpp installé est la version %s : il sera remplacé\n", plan.Installed)
+		fmt.Printf(lang.T().CLI.WhisperWillReplaceFmt, plan.Installed)
 	}
 	if !plan.NeedsDownload() {
-		fmt.Println("\nTout est déjà installé.")
+		fmt.Println(lang.T().CLI.AllInstalled)
 		return nil
 	}
-	fmt.Println("  à télécharger :")
+	fmt.Println(lang.T().CLI.ToDownload)
 	for _, m := range plan.Missing {
 		fmt.Printf("    - %s\n", m)
 	}
 	fmt.Println()
 
 	if dryRun {
-		fmt.Println("(--dry-run : rien n'a été téléchargé)")
+		fmt.Println(lang.T().CLI.DryRunNothing)
 		return nil
 	}
 
@@ -607,7 +622,7 @@ func cmdSetup(ctx context.Context, dryRun bool) error {
 		return err
 	}
 
-	fmt.Println("\nInstallation terminée. Vérifiez avec « godio doctor ».")
+	fmt.Println(lang.T().CLI.InstallDone)
 	return nil
 }
 
@@ -648,7 +663,7 @@ func openInEditor(path string) error {
 
 func orDefault(s string) string {
 	if strings.TrimSpace(s) == "" {
-		return "par défaut"
+		return lang.T().CLI.DefaultDevice
 	}
 	return s
 }
@@ -664,8 +679,8 @@ func cmdRecord(ctx context.Context, seconds int) error {
 		return err
 	}
 
-	fmt.Printf("Enregistrement dans %s\n", sess.Dir)
-	fmt.Println("Ctrl+C pour arrêter.")
+	fmt.Printf(lang.T().CLI.RecordingInFmt, sess.Dir)
+	fmt.Println(lang.T().CLI.CtrlCToStop)
 
 	if seconds > 0 {
 		var cancel context.CancelFunc
@@ -678,7 +693,7 @@ func cmdRecord(ctx context.Context, seconds int) error {
 		Warning: cfg.Audio.AutoStopWarning.Duration,
 	}
 	if watchdog.Enabled() {
-		fmt.Printf("Arrêt automatique après %s de silence.\n", watchdog.After)
+		fmt.Printf(lang.T().CLI.AutoStoppedFmt, watchdog.After)
 	}
 
 	// A live level readout turns the most likely failure — loopback pointed at
@@ -694,7 +709,7 @@ loop:
 			break loop
 		case <-ticker.C:
 			l := rec.Levels()
-			line := fmt.Sprintf("  moi %s  |  eux %s   ",
+			line := fmt.Sprintf(lang.T().CLI.MetersFmt,
 				meter(l[audio.TrackMe]), meter(l[audio.TrackThem]))
 
 			silentFor := rec.SilentFor()
@@ -704,14 +719,14 @@ loop:
 				fmt.Printf("\r%s\n", line)
 				break loop
 			case audio.AutoStopWarn:
-				line += fmt.Sprintf("arrêt dans %s ", watchdog.Remaining(silentFor))
+				line += fmt.Sprintf(lang.T().CLI.StoppingInFmt, watchdog.Remaining(silentFor))
 			}
 			fmt.Printf("\r%s", line)
 		}
 	}
 	fmt.Println()
 	if autoStopped {
-		fmt.Printf("Silence des deux côtés pendant %s : arrêt automatique.\n", watchdog.After)
+		fmt.Printf(lang.T().CLI.AutoStopSilenceFmt, watchdog.After)
 	}
 
 	res, err := rec.Stop()
@@ -725,10 +740,10 @@ loop:
 
 	for _, t := range []audio.Track{audio.TrackMe, audio.TrackThem} {
 		tr := res.Tracks[t]
-		fmt.Printf("  %-5s %6.1f s  %s\n", t, tr.Seconds, tr.Path)
+		fmt.Printf(lang.T().CLI.TrackLineFmt, t, tr.Seconds, tr.Path)
 	}
-	fmt.Printf("\nSession : %s\n", sess.Dir)
-	fmt.Printf("Suite   : godio process %s\n", sess.Dir)
+	fmt.Printf(lang.T().CLI.SessionBlankFmt, sess.Dir)
+	fmt.Printf(lang.T().CLI.NextStepFmt, sess.Dir)
 	return nil
 }
 
@@ -745,7 +760,7 @@ func meter(l audio.TrackLevel) string {
 	}
 	state := "silence"
 	if l.Active {
-		state = "actif  "
+		state = lang.T().CLI.Live
 	}
 	return fmt.Sprintf("[%s%s] %6.1f dB %s",
 		strings.Repeat("#", n), strings.Repeat(".", width-n), l.DBFS, state)
@@ -766,7 +781,7 @@ func startRecording(cfg config.Config) (*audio.Recorder, *pipeline.Session, erro
 	mic, err := audio.Find(capture, cfg.Audio.MicDevice)
 	if err != nil {
 		actx.Close()
-		return nil, nil, fmt.Errorf("micro : %w", err)
+		return nil, nil, fmt.Errorf(lang.T().Err.MicFmt, err)
 	}
 
 	playback, err := actx.PlaybackDevices()
@@ -777,7 +792,7 @@ func startRecording(cfg config.Config) (*audio.Recorder, *pipeline.Session, erro
 	out, err := audio.Find(playback, cfg.Audio.LoopbackDevice)
 	if err != nil {
 		actx.Close()
-		return nil, nil, fmt.Errorf("sortie : %w", err)
+		return nil, nil, fmt.Errorf(lang.T().Err.OutputFmt, err)
 	}
 
 	root, err := config.SessionsDir()
@@ -821,7 +836,7 @@ func cmdStage(ctx context.Context, stage, session, style, day string) error {
 	// producing notes in another style.
 	if style != "" {
 		if !assets.ValidStyle(style) {
-			return fmt.Errorf("style inconnu %q (styles : %s)", style, strings.Join(assets.Styles, ", "))
+			return fmt.Errorf(lang.T().Err.UnknownStyleFmt, style, strings.Join(assets.Styles, ", "))
 		}
 		cfg.Claude.Style = style
 	}
@@ -845,7 +860,7 @@ func cmdStage(ctx context.Context, stage, session, style, day string) error {
 		if i > 0 {
 			fmt.Println()
 		}
-		fmt.Printf("Session : %s\n", sess.Dir)
+		fmt.Printf(lang.T().CLI.SessionFmt, sess.Dir)
 		if err := runStage(ctx, p, stage, sess); err != nil {
 			return fmt.Errorf("%s : %w", filepath.Base(sess.Dir), err)
 		}
@@ -878,7 +893,7 @@ func runStage(ctx context.Context, p pipeline.Pipeline, stage string, sess *pipe
 		if err != nil {
 			return err
 		}
-		fmt.Printf("\n%s\n%d action(s) · %s\n",
+		fmt.Printf(lang.T().CLI.ProcessedFmt,
 			res.NotePath, res.Actions, res.Elapsed.Round(time.Second))
 	}
 	return nil
@@ -888,7 +903,7 @@ func runStage(ctx context.Context, p pipeline.Pipeline, stage string, sess *pipe
 // session of a day, or — as before — the most recent one.
 func resolveSessions(dir, day string) ([]*pipeline.Session, error) {
 	if dir != "" && day != "" {
-		return nil, errors.New("--day et un dossier de session s'excluent")
+		return nil, errors.New(lang.T().Err.DayAndSession)
 	}
 	if dir != "" {
 		s, err := pipeline.OpenSession(dir)
@@ -937,8 +952,8 @@ func cmdPurge(cmd *cli.Command) error {
 	p := pipeline.Pipeline{Cfg: cfg}
 	policy := p.Retention()
 	if !policy.Enabled() {
-		fmt.Println("Aucune purge configurée : sessions.keep_days et sessions.keep_audio_days valent 0.")
-		fmt.Println("Essayez « godio purge --keep-days 90 --keep-audio-days 7 --dry-run ».")
+		fmt.Println(lang.T().CLI.NoRetention)
+		fmt.Println(lang.T().CLI.TryPurge)
 		return nil
 	}
 
@@ -952,23 +967,23 @@ func cmdPurge(cmd *cli.Command) error {
 }
 
 func printPurge(res pipeline.Purged, dry bool) {
-	verb, freed := "Supprimé", "libérés"
+	verb, freed := lang.T().CLI.Deleted, lang.T().CLI.Freed
 	if dry {
-		verb, freed = "À supprimer", "seraient libérés"
+		verb, freed = lang.T().CLI.WouldDelete, lang.T().CLI.WouldFree
 	}
 	if res.Empty() {
-		fmt.Println("Rien à supprimer.")
+		fmt.Println(lang.T().CLI.NothingToDelete)
 	}
 	for _, name := range res.Audio {
-		fmt.Printf("  %s : audio (%s)\n", name, verb)
+		fmt.Printf(lang.T().CLI.PurgeAudioFmt, name, verb)
 	}
 	for _, name := range res.Sessions {
-		fmt.Printf("  %s : session entière (%s)\n", name, verb)
+		fmt.Printf(lang.T().CLI.PurgeSessionFmt, name, verb)
 	}
 	if !res.Empty() {
-		fmt.Printf("%.1f Mo %s\n", float64(res.Bytes)/(1<<20), freed)
+		fmt.Printf(lang.T().CLI.PurgeFreedFmt, float64(res.Bytes)/(1<<20), freed)
 	}
 	if res.Kept > 0 {
-		fmt.Printf("%d session(s) conservée(s) : pas de notes.md, le traitement n'est jamais allé au bout.\n", res.Kept)
+		fmt.Printf(lang.T().CLI.PurgeKeptFmt, res.Kept)
 	}
 }

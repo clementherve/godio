@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/clementherve/godio/internal/lang"
 )
 
 // Progress reports download progress for one file. It has the same shape as
@@ -86,7 +88,7 @@ func Apply(ctx context.Context, a Available, dir string, p Progress) (Applied, e
 
 	staging, err := os.MkdirTemp(dir, ".godio-update-*")
 	if err != nil {
-		return Applied{}, fmt.Errorf("%w (dossier %s)", err, dir)
+		return Applied{}, fmt.Errorf(lang.T().Err.StagingFmt, err, dir)
 	}
 	defer os.RemoveAll(staging)
 
@@ -110,7 +112,7 @@ func Apply(ctx context.Context, a Available, dir string, p Progress) (Applied, e
 // dir. Someone who deleted godio-tray.exe does not get it back from an update.
 func targetsIn(dir string, assets []Asset) ([]Asset, error) {
 	if len(assets) == 0 {
-		return nil, fmt.Errorf("aucun binaire publié pour %s/%s", runtime.GOOS, runtime.GOARCH)
+		return nil, fmt.Errorf(lang.T().Err.NoBinariesFmt, runtime.GOOS, runtime.GOARCH)
 	}
 	var out []Asset
 	for _, a := range assets {
@@ -119,7 +121,7 @@ func targetsIn(dir string, assets []Asset) ([]Asset, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("aucun binaire godio trouvé dans %s", dir)
+		return nil, fmt.Errorf(lang.T().Err.NoLocalBinaryFmt, dir)
 	}
 	return out, nil
 }
@@ -170,8 +172,8 @@ func commit(dir string, targets []Asset, staged map[string]string) ([]string, er
 // somewhere the user cannot write, typically Program Files.
 func writeError(dir string, err error) error {
 	if errors.Is(err, os.ErrPermission) {
-		return fmt.Errorf("écriture refusée dans %s : déplacez godio dans un dossier qui vous appartient, "+
-			"ou relancez la commande en administrateur (%w)", dir, err)
+		return fmt.Errorf(lang.T().Err.WriteDenied1Fmt+
+			lang.T().Err.WriteDenied2Fmt, dir, err)
 	}
 	return err
 }
@@ -218,14 +220,14 @@ func download(ctx context.Context, a Asset, dst string, p Progress) error {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("téléchargement de %s : %w", a.Name, err)
+		return fmt.Errorf(lang.T().Err.DownloadFmtW, a.Name, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNotPublic
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("téléchargement de %s : %s", a.Name, resp.Status)
+		return fmt.Errorf(lang.T().Err.DownloadFmtS, a.Name, resp.Status)
 	}
 
 	out, err := os.Create(dst)
@@ -240,11 +242,11 @@ func download(ctx context.Context, a Asset, dst string, p Progress) error {
 		copyErr = err
 	}
 	if copyErr != nil {
-		return fmt.Errorf("téléchargement de %s : %w", a.Name, copyErr)
+		return fmt.Errorf(lang.T().Err.DownloadFmtW, a.Name, copyErr)
 	}
 
 	if got := hex.EncodeToString(sum.Sum(nil)); got != want {
-		return fmt.Errorf("%s : empreinte incorrecte (attendu %s, obtenu %s) — téléchargement corrompu, rien n'a été remplacé",
+		return fmt.Errorf(lang.T().Err.BadDigestFmt,
 			a.Name, want[:12], got[:12])
 	}
 	return nil
@@ -259,10 +261,10 @@ func wantedSum(a Asset) (string, error) {
 	digest := strings.TrimSpace(strings.ToLower(a.Digest))
 	hexsum, ok := strings.CutPrefix(digest, "sha256:")
 	if !ok || len(hexsum) != 64 {
-		return "", fmt.Errorf("%s : GitHub ne publie pas d'empreinte sha256 pour ce fichier, installation refusée", a.Name)
+		return "", fmt.Errorf(lang.T().Err.NoDigestFmt, a.Name)
 	}
 	if _, err := hex.DecodeString(hexsum); err != nil {
-		return "", fmt.Errorf("%s : empreinte publiée illisible (%q)", a.Name, a.Digest)
+		return "", fmt.Errorf(lang.T().Err.UnreadableDigestFmt, a.Name, a.Digest)
 	}
 	return hexsum, nil
 }

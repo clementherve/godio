@@ -12,6 +12,7 @@ import (
 	"github.com/clementherve/godio/internal/audio"
 	"github.com/clementherve/godio/internal/claudecli"
 	"github.com/clementherve/godio/internal/config"
+	"github.com/clementherve/godio/internal/lang"
 	"github.com/clementherve/godio/internal/obsidian"
 	"github.com/clementherve/godio/internal/transcript"
 	"github.com/clementherve/godio/internal/whisper"
@@ -67,22 +68,22 @@ func (p Pipeline) Transcribe(ctx context.Context, s *Session) (string, error) {
 		into  *[]transcript.Segment
 		label string
 	}{
-		{audio.TrackMe, &mine, "micro"},
-		{audio.TrackThem, &theirs, "système"},
+		{audio.TrackMe, &mine, lang.T().Notes.TrackMic},
+		{audio.TrackThem, &theirs, lang.T().Notes.TrackSystem},
 	} {
 		path := s.WAV(t.track)
 		if _, err := os.Stat(path); err != nil {
 			return "", fmt.Errorf("track %s: %w", t.track, err)
 		}
 
-		p.logf("Transcription (%s)…", t.label)
+		p.logf(lang.T().Notes.TranscribingFmt, t.label)
 		start := time.Now()
 
 		// Two tracks are transcribed back to back, so each one's 0..100 covers
 		// half of the overall bar.
 		half := i
 		r.OnProgress = func(pc int) {
-			p.progress("Transcription", (half*100+pc)/2)
+			p.progress(lang.T().Notes.StageTranscription, (half*100+pc)/2)
 		}
 
 		segs, err := r.Transcribe(ctx, path)
@@ -90,7 +91,7 @@ func (p Pipeline) Transcribe(ctx context.Context, s *Session) (string, error) {
 			return "", err
 		}
 		*t.into = segs
-		p.logf("  %s : %d segments en %s", t.label, len(segs), time.Since(start).Round(time.Second))
+		p.logf(lang.T().Notes.TranscribedTrackFmt, t.label, len(segs), time.Since(start).Round(time.Second))
 	}
 
 	merged := transcript.Merge(mine, theirs, s.Offset(audio.TrackMe), s.Offset(audio.TrackThem))
@@ -98,13 +99,13 @@ func (p Pipeline) Transcribe(ctx context.Context, s *Session) (string, error) {
 		return "", ErrNothingHeard
 	}
 
-	text := transcript.Format(merged)
+	text := transcript.Format(merged, transcript.LabelsFor(p.Cfg.NotesLang()))
 	if err := os.WriteFile(s.Path("transcript.txt"), []byte(text), 0o644); err != nil {
 		return "", fmt.Errorf("writing transcript: %w", err)
 	}
 
 	st := transcript.Describe(merged)
-	p.logf("Transcription : %d blocs, %d mots (moi %d / eux %d)",
+	p.logf(lang.T().Notes.TranscribedFmt,
 		st.Segments, st.Words, st.BySpeaker[transcript.Me], st.BySpeaker[transcript.Them])
 
 	return text, nil
@@ -123,9 +124,9 @@ func (p Pipeline) Extract(ctx context.Context, s *Session) (string, error) {
 		Timeout:    p.Cfg.Claude.Timeout.Duration,
 	}
 
-	p.logf("Extraction (%s, style %s)…", p.Cfg.Claude.Model, p.Cfg.Claude.Style)
-	p.progress("Extraction", 0)
-	notes, err := r.Extract(ctx, assets.ExtractPromptFR(p.Cfg.Claude.Style), string(raw))
+	p.logf(lang.T().Notes.ExtractingFmt, p.Cfg.Claude.Model, p.Cfg.Claude.Style)
+	p.progress(lang.T().Notes.StageExtraction, 0)
+	notes, err := r.Extract(ctx, assets.ExtractPrompt(p.Cfg.NotesLang(), p.Cfg.Claude.Style), string(raw))
 	if err != nil {
 		return "", err
 	}
@@ -152,7 +153,7 @@ func (p Pipeline) Write(s *Session) (string, error) {
 	if err := obsidian.Append(path, p.Cfg.Obsidian.Heading, entry); err != nil {
 		return "", err
 	}
-	p.logf("Ajouté à %s", path)
+	p.logf(lang.T().Notes.AppendedFmt, path)
 	return path, nil
 }
 
@@ -171,7 +172,7 @@ func (p Pipeline) Process(ctx context.Context, s *Session) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	p.progress("Terminé", 100)
+	p.progress(lang.T().Notes.Done, 100)
 
 	return Result{
 		NotePath: path,
@@ -197,5 +198,5 @@ func (s *Session) Title() string {
 	if t := strings.TrimSpace(s.Meta.Title); t != "" {
 		return t
 	}
-	return "Réunion " + s.Meta.Started.Format("15:04")
+	return lang.T().Notes.MeetingPrefix + s.Meta.Started.Format("15:04")
 }

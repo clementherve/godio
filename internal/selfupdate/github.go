@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+
+	"github.com/clementherve/godio/internal/lang"
 )
 
 // Repo is the repository releases are taken from.
@@ -39,8 +41,16 @@ type Release struct {
 // private and the updater does not authenticate — and saying so beats
 // reporting "404 Not Found" to someone who can see the release in a browser
 // while logged in.
-var ErrNotPublic = errors.New("les versions de godio ne sont pas accessibles publiquement " +
-	"(dépôt privé) : rendez " + Repo + " public, ou téléchargez la mise à jour à la main")
+// It is a type rather than errors.New so the message is built when it is
+// shown, not when the package is initialised — which happens before the
+// interface language has been chosen.
+var ErrNotPublic error = notPublicError{}
+
+type notPublicError struct{}
+
+func (notPublicError) Error() string {
+	return lang.T().Err.NotPublic1 + lang.T().Err.NotPublic2 + Repo + lang.T().Err.NotPublic3
+}
 
 // binaryNames lists the published executables, in the order they are swapped.
 //
@@ -77,7 +87,7 @@ func Latest(ctx context.Context, prerelease bool) (Release, error) {
 			return rel, nil
 		}
 	}
-	return Release{}, errors.New("aucune version publiée")
+	return Release{}, errors.New(lang.T().Err.NoRelease)
 }
 
 // Binaries returns the release's godio executables.
@@ -89,7 +99,7 @@ func Binaries(rel Release) ([]Asset, error) {
 // can be tested on a platform that publishes no binaries of its own.
 func binariesFrom(rel Release, names []string) ([]Asset, error) {
 	if len(names) == 0 {
-		return nil, fmt.Errorf("les binaires publiés sont pour windows/amd64, pas %s/%s",
+		return nil, fmt.Errorf(lang.T().Err.WindowsOnlyFmt,
 			runtime.GOOS, runtime.GOARCH)
 	}
 
@@ -104,7 +114,7 @@ func binariesFrom(rel Release, names []string) ([]Asset, error) {
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("la version %s ne contient pas %s", rel.Tag, want)
+			return nil, fmt.Errorf(lang.T().Err.ReleaseMissingFmt, rel.Tag, want)
 		}
 	}
 	return out, nil
@@ -121,7 +131,7 @@ func getJSON(ctx context.Context, url string, into any) error {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("interrogation de GitHub : %w", err)
+		return fmt.Errorf(lang.T().Err.GitHubQueryFmtW, err)
 	}
 	defer resp.Body.Close()
 
@@ -131,13 +141,13 @@ func getJSON(ctx context.Context, url string, into any) error {
 		return ErrNotPublic
 	case http.StatusForbidden, http.StatusTooManyRequests:
 		// Unauthenticated API calls are limited to 60 an hour per address.
-		return errors.New("GitHub refuse la requête (limite de débit atteinte) — réessayez plus tard")
+		return errors.New(lang.T().Err.RateLimited)
 	default:
-		return fmt.Errorf("interrogation de GitHub : %s", resp.Status)
+		return fmt.Errorf(lang.T().Err.GitHubQueryFmtS, resp.Status)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(into); err != nil {
-		return fmt.Errorf("réponse de GitHub illisible : %w", err)
+		return fmt.Errorf(lang.T().Err.GitHubUnreadableFmt, err)
 	}
 	return nil
 }

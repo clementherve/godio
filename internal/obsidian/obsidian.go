@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/clementherve/godio/internal/lang"
 )
 
 // Entry is one meeting's notes.
@@ -88,7 +90,7 @@ func Insert(doc, heading string, e Entry) string {
 func renderEntry(e Entry) string {
 	title := strings.TrimSpace(e.Title)
 	if title == "" {
-		title = "Réunion"
+		title = lang.T().Notes.Meeting
 	}
 	return fmt.Sprintf("### %s — %s\n\n%s\n",
 		e.At.Format("15:04"), title, strings.TrimSpace(e.Body))

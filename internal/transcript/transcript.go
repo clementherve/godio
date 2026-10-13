@@ -7,17 +7,45 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/clementherve/godio/internal/lang"
 )
 
 // Speaker identifies which track a segment came from.
 type Speaker string
 
+// Speakers are stable keys, not display text: they are map keys in Stats and
+// they identify a track, so they must not change with the interface language.
+// Format turns them into words through Labels.
 const (
 	// Me is the microphone track.
-	Me Speaker = "Moi"
+	Me Speaker = "me"
 	// Them is the system-audio (loopback) track.
-	Them Speaker = "Interlocuteur"
+	Them Speaker = "them"
 )
+
+// Labels is how the two speakers are written in a transcript.
+type Labels struct{ Me, Them string }
+
+// LabelsFor returns the labels for the language the notes are written in.
+//
+// Transcripts recorded before this was translated carry the French labels, and
+// `godio extract --day` makes re-reading them routine — which is why both
+// prompts name both sets rather than relying on one.
+func LabelsFor(l lang.Lang) Labels {
+	if l == lang.FR {
+		return Labels{Me: "Moi", Them: "Interlocuteur"}
+	}
+	return Labels{Me: "Me", Them: "Them"}
+}
+
+// label renders one speaker.
+func (l Labels) label(s Speaker) string {
+	if s == Me {
+		return l.Me
+	}
+	return l.Them
+}
 
 // Segment is one span of speech on one track, offset from the start of the recording.
 type Segment struct {
@@ -82,12 +110,12 @@ func collapse(segs []Segment) []Segment {
 
 // Format renders the transcript in the form handed to Claude:
 //
-//	[00:00:12] Moi: ...
-//	[00:00:19] Interlocuteur: ...
-func Format(segs []Segment) string {
+//	[00:00:12] Me: ...
+//	[00:00:19] Them: ...
+func Format(segs []Segment, labels Labels) string {
 	var b strings.Builder
 	for _, s := range segs {
-		fmt.Fprintf(&b, "[%s] %s: %s\n", timestamp(s.Start), s.Speaker, s.Text)
+		fmt.Fprintf(&b, "[%s] %s: %s\n", timestamp(s.Start), labels.label(s.Speaker), s.Text)
 	}
 	return b.String()
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/clementherve/godio/internal/audio"
 	"github.com/clementherve/godio/internal/config"
 	"github.com/clementherve/godio/internal/deps"
+	"github.com/clementherve/godio/internal/lang"
 	"github.com/clementherve/godio/internal/notify"
 	"github.com/clementherve/godio/internal/pipeline"
 	"github.com/clementherve/godio/internal/selfupdate"
@@ -80,34 +81,34 @@ func Run(cfg config.Config, version string) error {
 
 func (a *App) onReady() {
 	a.setIcon(assets.IconIdle)
-	systray.SetTooltip("godio — prêt")
+	systray.SetTooltip(lang.T().Tray.TooltipReady)
 
-	a.mToggle = systray.AddMenuItem("Démarrer l'enregistrement", "")
-	a.mStatus = systray.AddMenuItem("Prêt", "")
+	a.mToggle = systray.AddMenuItem(lang.T().Tray.Start, "")
+	a.mStatus = systray.AddMenuItem(lang.T().Tray.Ready, "")
 	a.mStatus.Disable()
 
 	systray.AddSeparator()
 	a.buildDeviceMenus()
 
 	systray.AddSeparator()
-	cfgMenu := systray.AddMenuItem("Configuration", "")
-	a.mVault = cfgMenu.AddSubMenuItem("Choisir le coffre Obsidian…", "")
+	cfgMenu := systray.AddMenuItem(lang.T().Tray.ConfigMenu, "")
+	a.mVault = cfgMenu.AddSubMenuItem(lang.T().Tray.PickVault, "")
 	a.buildStyleMenu(cfgMenu)
-	a.mEdit = cfgMenu.AddSubMenuItem("Ouvrir config.toml", "")
-	a.mReload = cfgMenu.AddSubMenuItem("Recharger", "")
-	a.mSetup = systray.AddMenuItem("Installer / mettre à jour les modèles…", "")
+	a.mEdit = cfgMenu.AddSubMenuItem(lang.T().Tray.OpenConfig, "")
+	a.mReload = cfgMenu.AddSubMenuItem(lang.T().Tray.Reload, "")
+	a.mSetup = systray.AddMenuItem(lang.T().Tray.Setup, "")
 	// The sibling of the item above: that one updates the models, this one
 	// updates godio.
-	a.mUpdate = systray.AddMenuItem("Mettre à jour godio…", "Télécharge la dernière version depuis GitHub")
-	a.mRestart = systray.AddMenuItem("Redémarrer maintenant", "Relance godio avec la version installée")
+	a.mUpdate = systray.AddMenuItem(lang.T().Tray.Update, lang.T().Tray.UpdateTooltip)
+	a.mRestart = systray.AddMenuItem(lang.T().Tray.Restart, lang.T().Tray.RestartTooltip)
 	a.mRestart.Hide()
 
 	systray.AddSeparator()
-	a.mNote = systray.AddMenuItem("Ouvrir la note du jour", "")
-	a.mFolder = systray.AddMenuItem("Ouvrir le dossier de session", "")
+	a.mNote = systray.AddMenuItem(lang.T().Tray.OpenNote, "")
+	a.mFolder = systray.AddMenuItem(lang.T().Tray.OpenFolder, "")
 
 	systray.AddSeparator()
-	a.mQuit = systray.AddMenuItem("Quitter", "")
+	a.mQuit = systray.AddMenuItem(lang.T().Tray.Quit, "")
 
 	go a.loop()
 	go a.checkUpdate()
@@ -130,8 +131,8 @@ func (a *App) onExit() {
 // playing to a headset while loopback listens to the default device, which
 // records silence from the other party.
 func (a *App) buildDeviceMenus() {
-	mic := systray.AddMenuItem("Micro", "Périphérique d'entrée")
-	out := systray.AddMenuItem("Sortie capturée", "Périphérique dont le son est enregistré")
+	mic := systray.AddMenuItem(lang.T().Tray.MicMenu, lang.T().Tray.MicTooltip)
+	out := systray.AddMenuItem(lang.T().Tray.OutMenu, lang.T().Tray.OutTooltip)
 
 	actx, err := audio.NewContext()
 	if err != nil {
@@ -154,22 +155,31 @@ func (a *App) buildDeviceMenus() {
 // do not want the same notes — so it belongs in the menu rather than only in
 // config.toml.
 func (a *App) buildStyleMenu(parent *systray.MenuItem) {
-	menu := parent.AddSubMenuItem("Style des notes", "Densité et ton des notes produites par Claude")
+	menu := parent.AddSubMenuItem(lang.T().Tray.StyleMenu, lang.T().Tray.StyleTooltip)
 	for _, style := range assets.Styles {
 		a.styleItems = append(a.styleItems, &styleItem{
-			item:  menu.AddSubMenuItemCheckbox(styleLabels[style], "", style == a.cfg.Claude.Style),
+			item:  menu.AddSubMenuItemCheckbox(styleLabel(style), "", style == a.cfg.Claude.Style),
 			style: style,
 		})
 	}
 }
 
-// styleLabels names the styles in the interface's language; the config keys
+// styleLabel names a style in the interface's language; the config values
 // themselves stay in English, like every other value in config.toml.
-var styleLabels = map[string]string{
-	assets.StyleBullets:  "Télégraphique",
-	assets.StyleNormal:   "Standard",
-	assets.StyleDetailed: "Détaillé",
-	assets.StyleELI5:     "Vulgarisé",
+//
+// A function rather than a map, so « Recharger » can change the language
+// without the labels being stuck at whatever they were at startup.
+func styleLabel(style string) string {
+	switch style {
+	case assets.StyleBullets:
+		return lang.T().Tray.StyleBullets
+	case assets.StyleDetailed:
+		return lang.T().Tray.StyleDetailed
+	case assets.StyleELI5:
+		return lang.T().Tray.StyleELI5
+	default:
+		return lang.T().Tray.StyleNormal
+	}
 }
 
 // selectStyle applies a radio-style choice and persists it, since a style is a
@@ -185,7 +195,7 @@ func (a *App) selectStyle(chosen *styleItem) {
 		a.fail(err)
 		return
 	}
-	a.mStatus.SetTitle("Style des notes : " + styleLabels[chosen.style])
+	a.mStatus.SetTitle(lang.T().Tray.StylePrefix + styleLabel(chosen.style))
 }
 
 // markStyleLocked ticks the item matching the configuration. The caller must
@@ -206,7 +216,7 @@ func addDeviceItems(parent *systray.MenuItem, devs []audio.Device, selected stri
 	for _, d := range devs {
 		label := d.Name
 		if d.IsDefault {
-			label += " (défaut)"
+			label += lang.T().Tray.DefaultSuffix
 		}
 		checked := err == nil && d.Name == chosen.Name
 		items = append(items, &deviceItem{
@@ -271,7 +281,7 @@ func (a *App) selectDevice(group []*deviceItem, chosen *deviceItem, target *stri
 	defer a.mu.Unlock()
 	if a.rec != nil && a.rec.Running() {
 		// Changing device mid-recording would silently split the track.
-		a.mStatus.SetTitle("Arrêtez l'enregistrement pour changer de périphérique")
+		a.mStatus.SetTitle(lang.T().Tray.StopToChangeDevice)
 		chosen.item.Uncheck()
 		return
 	}
@@ -316,7 +326,7 @@ func (a *App) start() {
 	mic, err := audio.Find(capture, a.cfg.Audio.MicDevice)
 	if err != nil {
 		actx.Close()
-		a.fail(fmt.Errorf("micro : %w", err))
+		a.fail(fmt.Errorf(lang.T().Err.MicFmt, err))
 		return
 	}
 	playback, err := actx.PlaybackDevices()
@@ -328,7 +338,7 @@ func (a *App) start() {
 	out, err := audio.Find(playback, a.cfg.Audio.LoopbackDevice)
 	if err != nil {
 		actx.Close()
-		a.fail(fmt.Errorf("sortie : %w", err))
+		a.fail(fmt.Errorf(lang.T().Err.OutputFmt, err))
 		return
 	}
 
@@ -365,7 +375,7 @@ func (a *App) start() {
 	a.autoWarned = false
 	a.mu.Unlock()
 
-	a.mToggle.SetTitle("Arrêter l'enregistrement")
+	a.mToggle.SetTitle(lang.T().Tray.Stop)
 }
 
 func (a *App) stop() {
@@ -375,14 +385,14 @@ func (a *App) stop() {
 	a.working = true
 	a.mu.Unlock()
 
-	a.mToggle.SetTitle("Traitement en cours…")
+	a.mToggle.SetTitle(lang.T().Tray.Processing)
 	a.mToggle.Disable()
 	a.setIcon(assets.IconProcessing)
 
 	res, err := rec.Stop()
 	actx.Close()
 	if err != nil {
-		a.finish(pipeline.Result{}, fmt.Errorf("arrêt de l'enregistrement : %w", err))
+		a.finish(pipeline.Result{}, fmt.Errorf(lang.T().Err.StopRecordingFmt, err))
 		return
 	}
 	sess.RecordResult(res)
@@ -399,7 +409,7 @@ func (a *App) stop() {
 			Log: func(s string) { a.mStatus.SetTitle(s) },
 			OnProgress: func(stage string, pc int) {
 				a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, pc))
-				systray.SetTooltip(fmt.Sprintf("godio — %s %d%%", stage, pc))
+				systray.SetTooltip(fmt.Sprintf(lang.T().Tray.TooltipProgressFmt, stage, pc))
 			},
 		}
 		res, err := p.Process(context.Background(), sess)
@@ -412,7 +422,7 @@ func (a *App) finish(res pipeline.Result, err error) {
 	a.working = false
 	a.mu.Unlock()
 
-	a.mToggle.SetTitle("Démarrer l'enregistrement")
+	a.mToggle.SetTitle(lang.T().Tray.Start)
 	a.mToggle.Enable()
 
 	if err != nil {
@@ -422,17 +432,17 @@ func (a *App) finish(res pipeline.Result, err error) {
 	}
 
 	a.setIcon(assets.IconIdle)
-	summary := "Notes ajoutées à la note du jour"
+	summary := lang.T().Tray.NotesAdded
 	if res.Actions > 0 {
-		summary = fmt.Sprintf("Notes ajoutées — %d action(s)", res.Actions)
+		summary = fmt.Sprintf(lang.T().Tray.NotesAddedActionsFmt, res.Actions)
 	}
 	a.mStatus.SetTitle(summary)
-	systray.SetTooltip("godio — prêt")
+	systray.SetTooltip(lang.T().Tray.TooltipReady)
 
 	// The whole point of a notification here is that transcription takes long
 	// enough to walk away from.
-	a.notifier.Done("godio — réunion traitée",
-		fmt.Sprintf("%s\nTraitée en %s.", summary, res.Elapsed.Round(time.Second)))
+	a.notifier.Done(lang.T().Tray.ProcessedTitle,
+		fmt.Sprintf(lang.T().Tray.ProcessedBodyFmt, summary, res.Elapsed.Round(time.Second)))
 
 	a.purge()
 }
@@ -462,20 +472,20 @@ func (a *App) purge() {
 	if err != nil {
 		// A failed purge must never look like a failed meeting: the notes are
 		// already in the vault by this point.
-		a.mStatus.SetTitle("Purge : " + truncate(err.Error(), 50))
+		a.mStatus.SetTitle(lang.T().Tray.PurgeErrPrefix + truncate(err.Error(), 50))
 		return
 	}
 	if res.Empty() {
 		return
 	}
-	a.mStatus.SetTitle(fmt.Sprintf("Purge : %d session(s), %.0f Mo libérés",
+	a.mStatus.SetTitle(fmt.Sprintf(lang.T().Tray.PurgeDoneFmt,
 		len(res.Audio)+len(res.Sessions), float64(res.Bytes)/(1<<20)))
 }
 
 func (a *App) fail(err error) {
 	a.setIcon(assets.IconError)
 	a.mStatus.SetTitle(truncate(err.Error(), 60))
-	systray.SetTooltip("godio — " + truncate(err.Error(), 100))
+	systray.SetTooltip(lang.T().Tray.TooltipPrefix + truncate(err.Error(), 100))
 }
 
 // refresh updates the icon and tooltip from the live levels.
@@ -500,9 +510,9 @@ func (a *App) refresh() {
 
 	// Showing both levels makes a dead stream obvious before the meeting ends,
 	// rather than after the transcript comes back half empty.
-	systray.SetTooltip(fmt.Sprintf("Micro %s %.0f dB\nSystème %s %.0f dB",
+	systray.SetTooltip(fmt.Sprintf(lang.T().Tray.LevelsTooltipFmt,
 		mark(me.Active), me.DBFS, mark(them.Active), them.DBFS))
-	a.mStatus.SetTitle(fmt.Sprintf("Micro %s · Système %s", mark(me.Active), mark(them.Active)))
+	a.mStatus.SetTitle(fmt.Sprintf(lang.T().Tray.LevelsFmt, mark(me.Active), mark(them.Active)))
 
 	a.checkAutoStop(rec)
 }
@@ -522,8 +532,8 @@ func (a *App) checkAutoStop(rec *audio.Recorder) {
 	switch watchdog.State(silentFor) {
 	case audio.AutoStopWarn:
 		left := watchdog.Remaining(silentFor)
-		a.mStatus.SetTitle(fmt.Sprintf("Silence — arrêt automatique dans %s", left))
-		systray.SetTooltip(fmt.Sprintf("godio — silence, arrêt dans %s", left))
+		a.mStatus.SetTitle(fmt.Sprintf(lang.T().Tray.SilenceCountdownFmt, left))
+		systray.SetTooltip(fmt.Sprintf(lang.T().Tray.SilenceTooltipFmt, left))
 
 		a.mu.Lock()
 		first := !a.autoWarned
@@ -534,14 +544,14 @@ func (a *App) checkAutoStop(rec *audio.Recorder) {
 			// that nobody is at the machine, and a dialog waiting for a click
 			// would keep the recording running forever — the exact failure
 			// this feature exists to prevent.
-			a.notifier.Done("godio — silence détecté",
-				fmt.Sprintf("Arrêt automatique de l'enregistrement dans %s.\nParlez pour l'annuler.", left))
+			a.notifier.Done(lang.T().Tray.SilenceTitle,
+				fmt.Sprintf(lang.T().Tray.SilenceBodyFmt, left))
 		}
 
 	case audio.AutoStopFire:
-		a.mStatus.SetTitle("Arrêt automatique après " + silentFor.Round(time.Second).String() + " de silence")
-		a.notifier.Done("godio — arrêt automatique",
-			fmt.Sprintf("Silence des deux côtés pendant %s : l'enregistrement est arrêté et traité.",
+		a.mStatus.SetTitle(lang.T().Tray.AutoStoppedPrefix + silentFor.Round(time.Second).String() + lang.T().Tray.OfSilence)
+		a.notifier.Done(lang.T().Tray.AutoStopTitle,
+			fmt.Sprintf(lang.T().Tray.AutoStopBodyFmt,
 				watchdog.After))
 		a.stop()
 
@@ -576,7 +586,7 @@ func mark(active bool) string {
 // one nobody wants to type a Windows path for.
 func (a *App) chooseVault() {
 	go func() {
-		path, err := winui.PickFolder("Choisissez votre coffre Obsidian")
+		path, err := winui.PickFolder(lang.T().Tray.PickVaultTitle)
 		if err != nil {
 			if _, cancelled := err.(winui.ErrCancelled); !cancelled {
 				a.fail(err)
@@ -593,7 +603,7 @@ func (a *App) chooseVault() {
 			a.fail(err)
 			return
 		}
-		a.mStatus.SetTitle("Coffre : " + filepath.Base(path))
+		a.mStatus.SetTitle(lang.T().Tray.VaultPrefix + filepath.Base(path))
 	}()
 }
 
@@ -622,7 +632,49 @@ func (a *App) reloadConfig() {
 	// The style *is* read from the file, so the ticks have to follow it.
 	a.markStyleLocked()
 	a.mu.Unlock()
-	a.mStatus.SetTitle("Configuration rechargée")
+
+	lang.Use(lang.Resolve(cfg.Language))
+	a.relabel()
+	a.mStatus.SetTitle(lang.T().Tray.Reloaded)
+}
+
+// relabel re-reads every menu title from the catalogue, so changing the
+// language in config.toml takes effect on « Recharger » rather than at the
+// next launch. It runs on the click goroutine, like every other menu mutation.
+func (a *App) relabel() {
+	a.mu.Lock()
+	recording := a.rec != nil && a.rec.Running()
+	a.mu.Unlock()
+
+	toggle := lang.T().Tray.Start
+	if recording {
+		toggle = lang.T().Tray.Stop
+	}
+	for _, it := range []struct {
+		item  *systray.MenuItem
+		title string
+	}{
+		{a.mToggle, toggle},
+		{a.mVault, lang.T().Tray.PickVault},
+		{a.mEdit, lang.T().Tray.OpenConfig},
+		{a.mReload, lang.T().Tray.Reload},
+		{a.mSetup, lang.T().Tray.Setup},
+		{a.mUpdate, lang.T().Tray.Update},
+		{a.mRestart, lang.T().Tray.Restart},
+		{a.mNote, lang.T().Tray.OpenNote},
+		{a.mFolder, lang.T().Tray.OpenFolder},
+		{a.mQuit, lang.T().Tray.Quit},
+	} {
+		if it.item != nil {
+			it.item.SetTitle(it.title)
+		}
+	}
+	for _, it := range a.styleItems {
+		it.item.SetTitle(styleLabel(it.style))
+	}
+	// The device submenus carry device names, not translatable text; only the
+	// "(default)" suffix would change, and relabelling them would mean
+	// re-reading the device list for the sake of one word.
 }
 
 // runSetup downloads whisper.cpp and the models, reporting progress in the menu.
@@ -636,7 +688,7 @@ func (a *App) runSetup() {
 	a.mu.Unlock()
 
 	if busy {
-		a.mStatus.SetTitle("Occupé — réessayez après l'enregistrement")
+		a.mStatus.SetTitle(lang.T().Tray.Busy)
 		return
 	}
 	defer func() {
@@ -648,7 +700,7 @@ func (a *App) runSetup() {
 
 	a.mSetup.Disable()
 	a.setIcon(assets.IconProcessing)
-	a.mStatus.SetTitle("Recherche des dépendances…")
+	a.mStatus.SetTitle(lang.T().Tray.LookingForDeps)
 
 	ctx := context.Background()
 	dir := filepath.Dir(cfg.Resolve(cfg.Whisper.Exe))
@@ -662,7 +714,7 @@ func (a *App) runSetup() {
 	}
 	if !plan.NeedsDownload() {
 		a.setIcon(assets.IconIdle)
-		a.mStatus.SetTitle("Dépendances déjà installées (" + string(plan.Backend) + ")")
+		a.mStatus.SetTitle(lang.T().Tray.DepsAlreadyPrefix + string(plan.Backend) + ")")
 		return
 	}
 
@@ -671,7 +723,7 @@ func (a *App) runSetup() {
 			a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, done*100/total))
 			return
 		}
-		a.mStatus.SetTitle(fmt.Sprintf("%s %d Mo", stage, done/(1<<20)))
+		a.mStatus.SetTitle(fmt.Sprintf(lang.T().Tray.ProgressMBFmt, stage, done/(1<<20)))
 	})
 	if err != nil {
 		a.fail(err)
@@ -689,9 +741,9 @@ func (a *App) runSetup() {
 	_ = saved.Save()
 
 	a.setIcon(assets.IconIdle)
-	a.mStatus.SetTitle("Dépendances installées (" + string(plan.Backend) + ")")
-	a.notifier.Done("godio — installation terminée",
-		"whisper.cpp "+plan.Release+" ("+string(plan.Backend)+") et les modèles sont prêts.")
+	a.mStatus.SetTitle(lang.T().Tray.DepsInstalledPrefix + string(plan.Backend) + ")")
+	a.notifier.Done(lang.T().Tray.DepsDoneTitle,
+		lang.T().Tray.DepsDoneBody1+plan.Release+" ("+string(plan.Backend)+lang.T().Tray.DepsDoneBody2)
 }
 
 // checkUpdate asks GitHub, at startup, whether a newer release exists.
@@ -718,10 +770,10 @@ func (a *App) checkUpdate() {
 		return
 	}
 
-	a.mUpdate.SetTitle("Mettre à jour godio (" + avail.Latest + ")")
-	a.mStatus.SetTitle("Version " + avail.Latest + " disponible")
-	a.notifier.Done("godio — mise à jour disponible",
-		fmt.Sprintf("%s → %s (%s).\nMenu « Mettre à jour godio… » pour l'installer.",
+	a.mUpdate.SetTitle(lang.T().Tray.UpdatePrefix + avail.Latest + ")")
+	a.mStatus.SetTitle(lang.T().Tray.VersionPrefix + avail.Latest + lang.T().Tray.AvailableSuffix)
+	a.notifier.Done(lang.T().Tray.UpdateAvailableTitle,
+		fmt.Sprintf(lang.T().Tray.UpdateAvailableBodyFmt,
 			version, avail.Latest, avail.HumanSize()))
 }
 
@@ -737,7 +789,7 @@ func (a *App) runUpdate() {
 
 	if busy {
 		// Swapping the binaries mid-meeting would be the worst possible moment.
-		a.mStatus.SetTitle("Occupé — réessayez après l'enregistrement")
+		a.mStatus.SetTitle(lang.T().Tray.Busy)
 		return
 	}
 	defer func() {
@@ -749,7 +801,7 @@ func (a *App) runUpdate() {
 
 	a.mUpdate.Disable()
 	a.setIcon(assets.IconProcessing)
-	a.mStatus.SetTitle("Recherche d'une mise à jour…")
+	a.mStatus.SetTitle(lang.T().Tray.LookingForUpdate)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -761,7 +813,7 @@ func (a *App) runUpdate() {
 	}
 	if !avail.Newer {
 		a.setIcon(assets.IconIdle)
-		a.mStatus.SetTitle("godio est à jour (" + version + ")")
+		a.mStatus.SetTitle(lang.T().Tray.UpToDatePrefix + version + ")")
 		return
 	}
 
@@ -777,7 +829,7 @@ func (a *App) runUpdate() {
 			a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, done*100/total))
 			return
 		}
-		a.mStatus.SetTitle(fmt.Sprintf("%s %d Mo", stage, done/(1<<20)))
+		a.mStatus.SetTitle(fmt.Sprintf(lang.T().Tray.ProgressMBFmt, stage, done/(1<<20)))
 	})
 	if err != nil {
 		a.updateFailed(err)
@@ -786,18 +838,18 @@ func (a *App) runUpdate() {
 
 	// The running process is still the old code, whatever the files now say.
 	a.setIcon(assets.IconIdle)
-	a.mUpdate.SetTitle("godio " + applied.To + " installé")
-	a.mStatus.SetTitle("Redémarrez pour utiliser " + applied.To)
+	a.mUpdate.SetTitle(lang.T().Tray.GodioPrefix + applied.To + lang.T().Tray.InstalledSuffix)
+	a.mStatus.SetTitle(lang.T().Tray.RestartToUsePrefix + applied.To)
 	a.mRestart.Show()
-	a.notifier.Done("godio — mise à jour installée",
-		fmt.Sprintf("%s → %s.\nRedémarrez godio pour l'utiliser.", applied.From, applied.To))
+	a.notifier.Done(lang.T().Tray.UpdateDoneTitle,
+		fmt.Sprintf(lang.T().Tray.UpdateDoneBodyFmt, applied.From, applied.To))
 }
 
 // updateFailed reports an update error without dressing it up as a failed
 // meeting: nothing was recorded, and nothing was lost.
 func (a *App) updateFailed(err error) {
 	a.setIcon(assets.IconIdle)
-	a.mStatus.SetTitle("Mise à jour : " + truncate(err.Error(), 60))
+	a.mStatus.SetTitle(lang.T().Tray.UpdateErrPrefix + truncate(err.Error(), 60))
 	a.notifier.Failed(truncate(err.Error(), 200))
 }
 
@@ -807,7 +859,7 @@ func (a *App) restart() {
 	busy := a.working || (a.rec != nil && a.rec.Running())
 	a.mu.Unlock()
 	if busy {
-		a.mStatus.SetTitle("Occupé — réessayez après l'enregistrement")
+		a.mStatus.SetTitle(lang.T().Tray.Busy)
 		return
 	}
 

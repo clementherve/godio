@@ -13,6 +13,7 @@ import (
 
 	"github.com/clementherve/godio/internal/claudecli"
 	"github.com/clementherve/godio/internal/config"
+	"github.com/clementherve/godio/internal/lang"
 	"github.com/clementherve/godio/internal/notify"
 	"github.com/clementherve/godio/internal/selfupdate"
 	"github.com/clementherve/godio/internal/tray"
@@ -28,7 +29,7 @@ func main() {
 		// There is no console to print to in the GUI subsystem, so a failure
 		// that stops the tray from starting has to surface as a notification.
 		notify.New().Failed(err.Error())
-		fmt.Fprintln(os.Stderr, "erreur :", err)
+		fmt.Fprintln(os.Stderr, lang.T().CLI.ErrorPrefix, err)
 		os.Exit(1)
 	}
 }
@@ -40,14 +41,19 @@ func run() error {
 		selfupdate.CleanupOld(dir)
 	}
 
+	// Before config.Load, so a failure while reading it is already reported in
+	// the user's language; Load may rewrite it afterwards with the real value.
+	lang.Use(lang.Resolve(config.LanguageSetting()))
+
 	cfg, created, err := config.Load()
 	if err != nil {
 		return err
 	}
+	lang.Use(lang.Resolve(cfg.Language))
 	if created {
 		path, _ := config.Path()
-		notify.New().Done("godio — première configuration",
-			"Configuration créée :\n"+path+"\nChoisissez votre coffre Obsidian dans le menu.")
+		notify.New().Done(lang.T().Tray.FirstRunTitle,
+			fmt.Sprintf(lang.T().Tray.FirstRunBodyFmt, path))
 	}
 
 	// A missing vault or model must not stop the tray from starting: the menu

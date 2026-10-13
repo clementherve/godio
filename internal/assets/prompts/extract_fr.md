@@ -3,9 +3,9 @@ Tu reçois la transcription automatique d'une réunion professionnelle, en fran�
 La transcription est issue d'une reconnaissance vocale : elle contient des erreurs,
 des mots mal transcrits, des phrases incomplètes. Deux locuteurs sont étiquetés :
 
-- `Moi` : Clément, l'utilisateur.
-- `Interlocuteur` : toutes les autres personnes présentes (elles ne sont pas distinguées
-  entre elles ; déduis du contexte s'il y en a plusieurs).
+- `Moi` (ou `Me`) : l'utilisateur.
+- `Interlocuteur` (ou `Them`) : toutes les autres personnes présentes (elles ne sont pas
+  distinguées entre elles ; déduis du contexte s'il y en a plusieurs).
 
 Produis des notes de réunion en français, en Markdown, en respectant EXACTEMENT
 cette structure :
@@ -20,7 +20,7 @@ prise, écris `_Aucune décision actée._`
 
 **Actions** : les engagements concrets, sous forme de cases à cocher Markdown
 `- [ ]`. Précise le responsable entre parenthèses quand il est identifiable
-(`(Clément)` ou `(interlocuteur)`). Si aucune action, écris `_Aucune action._`
+(`(interlocuteur)`). Si aucune action, écris `_Aucune action._`
 
 Règles impératives :
 

@@ -87,6 +87,23 @@ auto_stop_warning = "30s"    # notice given before that ("0s" = none)
 `godio doctor` prints the current setting, and `godio record` shows the
 countdown inline next to the VU meters.
 
+## Language
+
+The interface speaks French and English. By default it follows the language you
+set Windows to; `godio doctor` prints which it resolved to.
+
+```toml
+language = "auto"   # auto | fr | en
+```
+
+**The notes are not affected by this.** They follow `whisper.language` — the
+language the meeting was actually held in — because the vault, the names and
+the jargon in it are that language whatever the menus say. A French meeting
+read on an English interface still produces French notes.
+
+Changing `language` and clicking **Recharger** in the tray relabels the menu
+without restarting.
+
 ## Note style
 
 The transcript is verbatim; the _notes_ are what Claude writes from it, and how
@@ -189,7 +206,7 @@ keep_days       = 0   # delete the whole session folder after N days (0 = never)
 
 The WAV pair is about **115 MB per hour**; the transcript and the notes are a
 few kilobytes.
-
+s
 The tray applies the policy after each meeting it finishes. By hand:
 
 ```powershell
@@ -205,7 +222,3 @@ go test ./...                 # the pure logic is testable off Windows
 go run ./scripts/genicons     # regenerate the icons
 go run ./scripts/checkpe godio.exe console godio-tray.exe gui
 ```
-
-Transcript merging, the WAV format, parsing whisper's output, resolving
-releases and writing to Obsidian are all covered by tests and do not depend on
-Windows. Loopback capture can only be verified on Windows.

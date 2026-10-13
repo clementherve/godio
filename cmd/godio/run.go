@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/clementherve/godio/internal/lang"
 	"github.com/clementherve/godio/internal/tray"
 )
 
@@ -17,7 +18,7 @@ func cmdRun() error {
 		return err
 	}
 	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("%w\n\nLancez « godio setup » puis « godio doctor »", err)
+		return fmt.Errorf(lang.T().Err.SetupFirstFmt, err)
 	}
 	return tray.Run(cfg, version)
 }
