@@ -1,6 +1,6 @@
 <div align="center">
-  <h1>Godio</h1>
-  <p><em>The ears of your brain, locally</em></p>
+  <h1>Godio 🎤</h1>
+  <p>The ears of your second brain. Whisper + Claude Code + Godio = ✨</p>
   <p>
     <a href="https://github.com/clementherve/godio/actions/workflows/ci.yml">
       <img src="https://github.com/clementherve/godio/actions/workflows/ci.yml/badge.svg" alt="CI">
