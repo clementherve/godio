@@ -38,7 +38,7 @@ Download the latest [release](https://github.com/clementherve/godio/releases), t
 
 | Binary               | Role                                                         |
 | -------------------- | ------------------------------------------------------------ |
-| **`godio-tray.exe`** | **the application** - the notification-area icon             |
+| **`godio-tray.exe`** | the notification-area icon                                   |
 | `godio.exe`          | the command line: `setup`, `doctor`, `record`, `transcribe`… |
 
 `godio-tray.exe` is built into the Windows GUI subsystem: it never opens a
@@ -59,10 +59,10 @@ something.
 
 Two dots, stacked to the right of the microphone:
 
-| Dot        | Meaning                            |
-| ---------- | ---------------------------------- |
-| **top**    | the microphone - you               |
-| **bottom** | the system audio - the other party |
+| Dot        | Meaning         |
+| ---------- | --------------- |
+| **top**    | you             |
+| **bottom** | the other party |
 
 | Colour    | State                                      |
 | --------- | ------------------------------------------ |
@@ -99,8 +99,8 @@ style = "normal"   # bullets | normal | detailed | eli5
 
 | Style      | What you get                                                                 |
 | ---------- | ---------------------------------------------------------------------------- |
-| `bullets`  | telegraphic - one line per point, and nothing that does not fit on one       |
-| `normal`   | **default** - a one-sentence summary and 3 to 7 factual points               |
+| `bullets`  | one line per point, and nothing that does not fit on one                     |
+| `normal`   | **default**. a one-sentence summary and 3 to 7 factual points                |
 | `detailed` | 8 to 15 points with sub-points: the figures, the reasons, the open questions |
 | `eli5`     | written for someone outside the subject; every acronym explained once        |
 
@@ -128,7 +128,7 @@ threads = 0         # 0 = one per physical core
 
 | Preset     | Decoding    |                                 |
 | ---------- | ----------- | ------------------------------- |
-| `fast`     | `-bs 1 -nf` | **default** - roughly 2× faster |
+| `fast`     | `-bs 1 -nf` | **default** (roughly 2x faster) |
 | `balanced` | `-bs 2`     |                                 |
 | `accurate` | `-bs 5`     | whisper.cpp's own default       |
 
@@ -145,10 +145,6 @@ its quantised `q5_0` version (three times smaller, markedly faster) for the
 CPU, where memory bandwidth is the limiting factor.
 
 ## Command line
-
-Every stage can be run on its own, against an existing session folder. The
-intermediate files are kept, so you can rework the extraction prompt - or
-compare two presets - without re-recording anything.
 
 ```powershell
 .\godio.exe devices              # list the audio devices
@@ -192,10 +188,7 @@ keep_days       = 0   # delete the whole session folder after N days (0 = never)
 ```
 
 The WAV pair is about **115 MB per hour**; the transcript and the notes are a
-few kilobytes. Dropping the audio alone therefore recovers nearly all the space
-while leaving the meeting replayable - `extract --day` still works on a session
-whose recordings are gone. `keep_audio_days = 7` with `keep_days = 365` is a
-reasonable pair.
+few kilobytes.
 
 The tray applies the policy after each meeting it finishes. By hand:
 
