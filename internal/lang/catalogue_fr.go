@@ -222,6 +222,7 @@ var french = Strings{
 		ReleaseMissingFmt:   "la version %s ne contient pas %s",
 		NoBinariesFmt:       "aucun binaire publié pour %s/%s",
 		NoLocalBinaryFmt:    "aucun binaire godio trouvé dans %s",
+		WingetManaged:       "ce godio a été installé par winget — mettez-le à jour avec « winget upgrade ClementHerve.Godio »",
 		DownloadFmtW:        "téléchargement de %s : %w",
 		DownloadFmtS:        "téléchargement de %s : %s",
 		BadDigestFmt:        "%s : empreinte incorrecte (attendu %s, obtenu %s) — téléchargement corrompu, rien n'a été remplacé",

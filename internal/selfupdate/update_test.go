@@ -286,3 +286,33 @@ func TestCheckComparesVersions(t *testing.T) {
 		}
 	}
 }
+
+// TestUnderRecognisesTheWingetPackageDir exercises the path test behind
+// ManagedByWinget. ManagedByWinget itself only answers on Windows, so what is
+// testable everywhere is the comparison it delegates to — including the
+// casing, since "WinGet" is spelled three ways across winget's own output and
+// the environment.
+func TestUnderRecognisesTheWingetPackageDir(t *testing.T) {
+	root := filepath.Join("C:\\Users\\x\\AppData\\Local", "Microsoft", "WinGet", "Packages")
+
+	cases := []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{"the package itself", filepath.Join(root, "ClementHerve.Godio_Microsoft.Winget.Source_8wekyb3d8bbwe"), true},
+		{"the root", root, true},
+		{"spelled differently", filepath.Join(strings.ToUpper(root), "ClementHerve.Godio"), true},
+		{"a trailing separator", root + string(filepath.Separator), true},
+		{"a manual install", filepath.Join("C:\\Users\\x", "godio"), false},
+		{"a sibling with the same prefix", root + "Backup", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := under(root, c.dir); got != c.want {
+				t.Errorf("under(%q, %q) = %v, want %v", root, c.dir, got, c.want)
+			}
+		})
+	}
+}

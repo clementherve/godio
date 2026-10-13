@@ -222,6 +222,7 @@ var english = Strings{
 		ReleaseMissingFmt:   "release %s does not contain %s",
 		NoBinariesFmt:       "no published binaries for %s/%s",
 		NoLocalBinaryFmt:    "no godio binary found in %s",
+		WingetManaged:       "this godio was installed by winget — update it with \"winget upgrade ClementHerve.Godio\"",
 		DownloadFmtW:        "downloading %s: %w",
 		DownloadFmtS:        "downloading %s: %s",
 		BadDigestFmt:        "%s: wrong checksum (expected %s, got %s) — corrupted download, nothing was replaced",

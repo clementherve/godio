@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+
+# The version manifest: the entry point winget reads first. It only names the
+# package and points at the default locale; everything else lives in the two
+# files beside it.
+#
+# PackageVersion drops the tag's "v" — winget-pkgs orders versions with it
+# stripped, and the directory a submission lands in is named after this value.
+PackageIdentifier: ClementHerve.Godio
+PackageVersion: 0.4.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

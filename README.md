@@ -27,12 +27,39 @@ system          ──► them.wav ──┘
 
 ## Installation
 
-Download the latest [release](https://github.com/clementherve/godio/releases), then:
+```powershell
+winget install ClementHerve.Godio
+godio setup
+godio doctor
+```
+
+winget puts both commands on the `PATH`, and installing this way does not go
+through the browser download that makes Windows show "Windows protected your
+PC" — the binaries are unsigned, so a direct download does.
+
+The rest of this README writes `.\godio.exe`, which is what a manual install
+needs; after `winget install` it is just `godio`.
+
+<details>
+<summary>Installing by hand instead</summary>
+
+Download `godio-windows-amd64.zip` from the latest
+[release](https://github.com/clementherve/godio/releases), unblock it
+(right-click → Properties → Unblock), extract it, then from that folder:
 
 ```powershell
 .\godio.exe setup
 .\godio.exe doctor
 ```
+
+Every release also carries `SHA256SUMS.txt`, printed by the build that
+produced the files. To check a download against it:
+
+```powershell
+Get-FileHash .\godio-windows-amd64.zip -Algorithm SHA256
+```
+
+</details>
 
 ## Two binaries
 
@@ -51,9 +78,19 @@ something.
 ## Updating
 
 ```powershell
+winget upgrade ClementHerve.Godio
+```
+
+On a manual install, godio updates itself:
+
+```powershell
 .\godio.exe update --check   # is there a newer release?
 .\godio.exe update           # download it, verify it, install it
 ```
+
+`update` refuses to run on a winget install: replacing the binaries behind
+winget's back leaves it reporting the old version, and its next upgrade would
+put that version back over the newer one.
 
 ## The tray icon
 
@@ -222,3 +259,9 @@ go test ./...                 # the pure logic is testable off Windows
 go run ./scripts/genicons     # regenerate the icons
 go run ./scripts/checkpe godio.exe console godio-tray.exe gui
 ```
+
+`packaging/winget/` holds the manifests submitted to
+[winget-pkgs](https://github.com/microsoft/winget-pkgs), kept here as the copy
+of what was sent. Tagging opens the pull request for the new version by itself;
+the manifests are bumped by hand only when something other than the version
+changes.

@@ -81,6 +81,10 @@ type Applied struct {
 // engineering against. Everything is downloaded and verified first; only then
 // does anything on disk move.
 func Apply(ctx context.Context, a Available, dir string, p Progress) (Applied, error) {
+	if ManagedByWinget(dir) {
+		return Applied{}, errors.New(lang.T().Err.WingetManaged)
+	}
+
 	targets, err := targetsIn(dir, a.Assets)
 	if err != nil {
 		return Applied{}, err
@@ -106,6 +110,36 @@ func Apply(ctx context.Context, a Available, dir string, p Progress) (Applied, e
 		return Applied{}, err
 	}
 	return Applied{From: a.Current, To: a.Latest, Replaced: replaced}, nil
+}
+
+// ManagedByWinget reports whether dir is a winget portable package.
+//
+// Swapping the binaries underneath winget desynchronises its record of what is
+// installed: « winget list » goes on reporting the version it put there, and
+// the next « winget upgrade » reinstalls that version over the newer one — a
+// silent downgrade. Refusing and naming the other command is the only outcome
+// that cannot lose someone's update.
+func ManagedByWinget(dir string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	local := os.Getenv("LOCALAPPDATA")
+	if local == "" {
+		return false
+	}
+	return under(filepath.Join(local, "Microsoft", "WinGet", "Packages"), dir)
+}
+
+// under reports whether dir is root or sits inside it. The comparison is
+// case-insensitive because the Windows paths it is given are: winget writes
+// "WinGet", the environment may say "Winget", and both name one directory.
+func under(root, dir string) bool {
+	root = strings.ToLower(filepath.Clean(root))
+	dir = strings.ToLower(filepath.Clean(dir))
+	if dir == root {
+		return true
+	}
+	return strings.HasPrefix(dir, root+string(filepath.Separator))
 }
 
 // targetsIn keeps the assets that correspond to a binary actually installed in

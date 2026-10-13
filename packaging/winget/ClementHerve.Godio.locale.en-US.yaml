@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: ClementHerve.Godio
+PackageVersion: 0.4.0
+PackageLocale: en-US
+Publisher: Clément Hervé
+PublisherUrl: https://github.com/clementherve
+PublisherSupportUrl: https://github.com/clementherve/godio/issues
+Author: Clément Hervé
+PackageName: Godio
+PackageUrl: https://github.com/clementherve/godio
+License: GPL-3.0-only
+LicenseUrl: https://github.com/clementherve/godio/blob/main/LICENSE
+ShortDescription: Records meetings, transcribes them with Whisper and writes the notes into Obsidian through Claude Code.
+Description: |-
+  Godio records both sides of a meeting — your microphone and the system
+  output — as two separate tracks, transcribes them locally with whisper.cpp,
+  then has Claude Code turn the merged transcript into notes appended to the
+  day's Obsidian note.
+
+  It ships two commands: godio, the command line (setup, doctor, record,
+  transcribe, extract, write), and godio-tray, a notification-area icon that
+  runs the same pipeline without a console window.
+Moniker: godio
+Tags:
+  - audio
+  - claude
+  - meeting
+  - notes
+  - obsidian
+  - recording
+  - transcription
+  - whisper
+ReleaseNotesUrl: https://github.com/clementherve/godio/releases/tag/v0.4.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

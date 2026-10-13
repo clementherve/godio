@@ -226,6 +226,7 @@ type ErrStrings struct {
 	ReleaseMissingFmt   string
 	NoBinariesFmt       string
 	NoLocalBinaryFmt    string
+	WingetManaged       string
 	DownloadFmtW        string
 	DownloadFmtS        string
 	BadDigestFmt        string

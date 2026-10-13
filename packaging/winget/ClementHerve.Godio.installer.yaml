@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: ClementHerve.Godio
+PackageVersion: 0.4.0
+MinimumOSVersion: 10.0.15063.0 # Windows 10 1703: event-driven WASAPI loopback
+InstallerLocale: en-US
+Platform:
+  - Windows.Desktop
+Installers:
+  # The release zip is not an installer, it is an archive of two standalone
+  # executables — so winget extracts it and registers each exe as a portable
+  # command. Both land under %LOCALAPPDATA%\Microsoft\WinGet\Packages\ with a
+  # shim on PATH, which is why the README's examples drop the ".\" prefix.
+  #
+  # The zip is packaged flat (see the Package step in ci.yml), so the relative
+  # paths have no directory component.
+  - Architecture: x64
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: godio.exe
+        PortableCommandAlias: godio
+      - RelativeFilePath: godio-tray.exe
+        PortableCommandAlias: godio-tray
+    InstallerUrl: https://github.com/clementherve/godio/releases/download/v0.4.0/godio-windows-amd64.zip
+    InstallerSha256: e7ef164a88b97b8d56ed7c2d8a732df2fae032aac4cd54cde41a5be5bc821b29
+ReleaseDate: 2026-10-13
+ManifestType: installer
+ManifestVersion: 1.6.0

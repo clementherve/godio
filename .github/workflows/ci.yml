@@ -145,3 +145,29 @@ jobs:
           || gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber "${assets[@]}"
+
+  winget:
+    name: Submit to winget
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      # Opens a pull request against microsoft/winget-pkgs for this tag: the
+      # action takes the previous version's manifests from the index, bumps
+      # the version and the installer URL, and hashes the published asset
+      # itself. packaging/winget is the copy this repository keeps of what it
+      # submitted; the action does not read it.
+      #
+      # It files *updates* only. The first version of a package has to be
+      # submitted by hand (wingetcreate new), after which every tag reaches
+      # winget through this job.
+      #
+      # WINGET_TOKEN is a classic PAT with the public_repo scope, on an account
+      # that has forked microsoft/winget-pkgs — the default GITHUB_TOKEN cannot
+      # push to another repository.
+      - uses: vedantmgoyal/winget-releaser@v2
+        with:
+          identifier: ClementHerve.Godio
+          installers-regex: 'godio-windows-amd64\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}
