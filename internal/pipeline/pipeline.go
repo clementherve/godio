@@ -123,9 +123,9 @@ func (p Pipeline) Extract(ctx context.Context, s *Session) (string, error) {
 		Timeout:    p.Cfg.Claude.Timeout.Duration,
 	}
 
-	p.logf("Extraction (%s)…", p.Cfg.Claude.Model)
+	p.logf("Extraction (%s, style %s)…", p.Cfg.Claude.Model, p.Cfg.Claude.Style)
 	p.progress("Extraction", 0)
-	notes, err := r.Extract(ctx, assets.ExtractPromptFR, string(raw))
+	notes, err := r.Extract(ctx, assets.ExtractPromptFR(p.Cfg.Claude.Style), string(raw))
 	if err != nil {
 		return "", err
 	}

@@ -10,9 +10,9 @@ des mots mal transcrits, des phrases incomplètes. Deux locuteurs sont étiquet�
 Produis des notes de réunion en français, en Markdown, en respectant EXACTEMENT
 cette structure :
 
-**Résumé** : une seule phrase décrivant l'objet de la réunion.
+**Résumé** : l'objet de la réunion.
 
-**Points clés** : 3 à 7 puces factuelles. Ce qui a été dit d'important, pas le détail
+**Points clés** : des puces factuelles. Ce qui a été dit d'important, pas le détail
 de la conversation.
 
 **Décisions** : les décisions actées. Une puce par décision. Si aucune décision n'a été
@@ -33,5 +33,7 @@ Règles impératives :
   existante qui possède déjà sa hiérarchie de titres.
 - Corrige silencieusement les noms propres et le vocabulaire métier manifestement
   mal transcrits lorsque le contexte les rend évidents.
+
+{{STYLE}}
 
 La transcription suit sur l'entrée standard.

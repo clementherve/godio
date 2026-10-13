@@ -46,6 +46,8 @@ type App struct {
 	mReload *systray.MenuItem
 	mSetup  *systray.MenuItem
 
+	styleItems []*styleItem
+
 	notifier notify.Notifier
 
 	micItems  []*deviceItem
@@ -56,6 +58,12 @@ type App struct {
 type deviceItem struct {
 	item *systray.MenuItem
 	name string
+}
+
+// styleItem is one note style in the Configuration submenu.
+type styleItem struct {
+	item  *systray.MenuItem
+	style string
 }
 
 // Run starts the tray and blocks until the user quits.
@@ -79,6 +87,7 @@ func (a *App) onReady() {
 	systray.AddSeparator()
 	cfgMenu := systray.AddMenuItem("Configuration", "")
 	a.mVault = cfgMenu.AddSubMenuItem("Choisir le coffre Obsidian…", "")
+	a.buildStyleMenu(cfgMenu)
 	a.mEdit = cfgMenu.AddSubMenuItem("Ouvrir config.toml", "")
 	a.mReload = cfgMenu.AddSubMenuItem("Recharger", "")
 	a.mSetup = systray.AddMenuItem("Installer / mettre à jour les modèles…", "")
@@ -129,6 +138,57 @@ func (a *App) buildDeviceMenus() {
 	}
 }
 
+// buildStyleMenu offers the note styles as a radio-style submenu. It is the one
+// setting worth changing between two meetings — a stand-up and a design review
+// do not want the same notes — so it belongs in the menu rather than only in
+// config.toml.
+func (a *App) buildStyleMenu(parent *systray.MenuItem) {
+	menu := parent.AddSubMenuItem("Style des notes", "Densité et ton des notes produites par Claude")
+	for _, style := range assets.Styles {
+		a.styleItems = append(a.styleItems, &styleItem{
+			item:  menu.AddSubMenuItemCheckbox(styleLabels[style], "", style == a.cfg.Claude.Style),
+			style: style,
+		})
+	}
+}
+
+// styleLabels names the styles in the interface's language; the config keys
+// themselves stay in English, like every other value in config.toml.
+var styleLabels = map[string]string{
+	assets.StyleBullets:  "Télégraphique",
+	assets.StyleNormal:   "Standard",
+	assets.StyleDetailed: "Détaillé",
+	assets.StyleELI5:     "Vulgarisé",
+}
+
+// selectStyle applies a radio-style choice and persists it, since a style is a
+// lasting preference rather than a per-meeting one.
+func (a *App) selectStyle(chosen *styleItem) {
+	a.mu.Lock()
+	a.cfg.Claude.Style = chosen.style
+	cfg := a.cfg
+	a.markStyleLocked()
+	a.mu.Unlock()
+
+	if err := cfg.Save(); err != nil {
+		a.fail(err)
+		return
+	}
+	a.mStatus.SetTitle("Style des notes : " + styleLabels[chosen.style])
+}
+
+// markStyleLocked ticks the item matching the configuration. The caller must
+// hold a.mu.
+func (a *App) markStyleLocked() {
+	for _, it := range a.styleItems {
+		if it.style == a.cfg.Claude.Style {
+			it.item.Check()
+			continue
+		}
+		it.item.Uncheck()
+	}
+}
+
 func addDeviceItems(parent *systray.MenuItem, devs []audio.Device, selected string) []*deviceItem {
 	chosen, err := audio.Find(devs, selected)
 	items := make([]*deviceItem, 0, len(devs))
@@ -169,6 +229,10 @@ func (a *App) loop() {
 	watch(a.mFolder, a.openSessionFolder)
 	watch(a.mQuit, func() { systray.Quit() })
 
+	for _, it := range a.styleItems {
+		it := it
+		watch(it.item, func() { a.selectStyle(it) })
+	}
 	for _, it := range a.micItems {
 		it := it
 		watch(it.item, func() { a.selectDevice(a.micItems, it, &a.cfg.Audio.MicDevice) })
@@ -356,6 +420,43 @@ func (a *App) finish(res pipeline.Result, err error) {
 	// enough to walk away from.
 	a.notifier.Done("godio — réunion traitée",
 		fmt.Sprintf("%s\nTraitée en %s.", summary, res.Elapsed.Round(time.Second)))
+
+	a.purge()
+}
+
+// purge applies the retention policy, once a meeting has been processed.
+//
+// Here rather than at startup: the one moment a deletion is certainly safe is
+// just after a successful run, when nothing is recording and the session that
+// matters most is the youngest one. It is silent when it frees nothing, which
+// is the usual case.
+func (a *App) purge() {
+	a.mu.Lock()
+	cfg := a.cfg
+	a.mu.Unlock()
+
+	p := pipeline.Pipeline{Cfg: cfg}
+	policy := p.Retention()
+	if !policy.Enabled() {
+		return
+	}
+
+	root, err := config.SessionsDir()
+	if err != nil {
+		return
+	}
+	res, err := pipeline.Purge(root, policy, time.Now(), false)
+	if err != nil {
+		// A failed purge must never look like a failed meeting: the notes are
+		// already in the vault by this point.
+		a.mStatus.SetTitle("Purge : " + truncate(err.Error(), 50))
+		return
+	}
+	if res.Empty() {
+		return
+	}
+	a.mStatus.SetTitle(fmt.Sprintf("Purge : %d session(s), %.0f Mo libérés",
+		len(res.Audio)+len(res.Sessions), float64(res.Bytes)/(1<<20)))
 }
 
 func (a *App) fail(err error) {
@@ -505,6 +606,8 @@ func (a *App) reloadConfig() {
 	cfg.Audio.MicDevice = a.cfg.Audio.MicDevice
 	cfg.Audio.LoopbackDevice = a.cfg.Audio.LoopbackDevice
 	a.cfg = cfg
+	// The style *is* read from the file, so the ticks have to follow it.
+	a.markStyleLocked()
 	a.mu.Unlock()
 	a.mStatus.SetTitle("Configuration rechargée")
 }

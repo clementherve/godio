@@ -11,6 +11,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/klauspost/cpuid/v2"
+
+	"github.com/clementherve/godio/internal/assets"
 )
 
 // Config is the full user configuration, read from config.toml.
@@ -19,6 +21,30 @@ type Config struct {
 	Audio    Audio    `toml:"audio"`
 	Whisper  Whisper  `toml:"whisper"`
 	Claude   Claude   `toml:"claude"`
+	Sessions Sessions `toml:"sessions"`
+}
+
+// Sessions is the retention policy for recorded meetings.
+//
+// The two knobs are separate because the costs are: the WAV pair is about
+// 115 MB an hour and is dead weight once a meeting is transcribed, while the
+// transcript and notes are a few kilobytes and are what makes a meeting
+// re-readable later with another claude.style. Zero means "keep forever",
+// which is the default and godio's behaviour before this existed.
+type Sessions struct {
+	// KeepAudioDays drops me.wav and them.wav after this many days, leaving
+	// the transcript and the notes behind.
+	KeepAudioDays int `toml:"keep_audio_days"`
+	// KeepDays deletes the whole session folder after this many days.
+	KeepDays int `toml:"keep_days"`
+}
+
+// Days turns a day count into a duration, treating anything negative as off.
+func Days(n int) time.Duration {
+	if n <= 0 {
+		return 0
+	}
+	return time.Duration(n) * 24 * time.Hour
 }
 
 // Obsidian locates the vault and the daily note within it.
@@ -82,6 +108,11 @@ type Claude struct {
 	Executable string   `toml:"executable"`
 	Model      string   `toml:"model"`
 	Timeout    Duration `toml:"timeout"`
+	// Style is how the notes are written: "bullets", "normal", "detailed" or
+	// "eli5". It changes the prompt, never the four sections the notes are
+	// made of, so a style can be changed and `godio extract` re-run on an old
+	// session without anything downstream noticing.
+	Style string `toml:"style"`
 }
 
 // Duration wraps time.Duration so TOML can carry it as "10s".
@@ -130,6 +161,7 @@ func Default() Config {
 			Executable: "claude",
 			Model:      "claude-haiku-5-5",
 			Timeout:    Duration{5 * time.Minute},
+			Style:      assets.StyleNormal,
 		},
 	}
 }
@@ -195,6 +227,15 @@ const header = `# Configuration de godio.
 #   whisper.preset   fast | balanced | accurate   (vitesse <-> précision)
 #   whisper.backend  auto | cuda | cpu            (auto = CUDA si GPU NVIDIA)
 #   whisper.threads  0 = un par coeur physique
+#
+#   claude.style     bullets | normal | detailed | eli5
+#                    (densité et ton des notes produites par Claude)
+#
+#   sessions.keep_audio_days  supprime me.wav / them.wav après N jours
+#                             (0 = jamais ; le transcript et les notes restent)
+#   sessions.keep_days        supprime tout le dossier de session après N jours
+#                             (0 = jamais). Une réunion sans notes.md n'est
+#                             jamais supprimée.
 #
 #   audio.auto_stop          arrêt après ce temps de silence des deux côtés
 #                            ("0s" = jamais)
@@ -274,6 +315,17 @@ func (c *Config) normalise() {
 	}
 	if c.Claude.Timeout.Duration <= 0 {
 		c.Claude.Timeout = d.Claude.Timeout
+	}
+	if !assets.ValidStyle(c.Claude.Style) {
+		c.Claude.Style = d.Claude.Style
+	}
+	// A negative retention is a typo, and the safe reading of a typo here is
+	// "delete nothing".
+	if c.Sessions.KeepAudioDays < 0 {
+		c.Sessions.KeepAudioDays = 0
+	}
+	if c.Sessions.KeepDays < 0 {
+		c.Sessions.KeepDays = 0
 	}
 }
 

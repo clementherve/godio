@@ -16,6 +16,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/clementherve/godio/internal/assets"
 	"github.com/clementherve/godio/internal/audio"
 	"github.com/clementherve/godio/internal/claudecli"
 	"github.com/clementherve/godio/internal/config"
@@ -117,9 +118,32 @@ func newApp() *cli.Command {
 				},
 			},
 			stageCommand("transcribe", "transcrit les deux pistes"),
-			stageCommand("extract", "génère les notes via Claude"),
+			stageCommand("extract", "génère les notes via Claude", styleFlag()),
 			stageCommand("write", "ajoute les notes à la note du jour"),
-			stageCommand("process", "transcribe + extract + write"),
+			stageCommand("process", "transcribe + extract + write", styleFlag()),
+			{
+				Name:      "purge",
+				Usage:     "supprime les vieilles sessions selon [sessions] du config.toml",
+				ArgsUsage: " ",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "dry-run",
+						Aliases: []string{"n"},
+						Usage:   "montre ce qui serait supprimé, sans rien supprimer",
+					},
+					&cli.IntFlag{
+						Name:  "keep-days",
+						Usage: "remplace sessions.keep_days pour cette exécution",
+					},
+					&cli.IntFlag{
+						Name:  "keep-audio-days",
+						Usage: "remplace sessions.keep_audio_days pour cette exécution",
+					},
+				},
+				Action: func(_ context.Context, cmd *cli.Command) error {
+					return cmdPurge(cmd)
+				},
+			},
 			{
 				Name:  "setup",
 				Usage: "télécharge whisper.cpp et les modèles",
@@ -188,15 +212,38 @@ func commandNames(cmd *cli.Command) []string {
 }
 
 // stageCommand builds one of the four pipeline stages, which differ only by
-// name: each takes an optional session folder and nothing else.
-func stageCommand(stage, usage string) *cli.Command {
+// name: each takes an optional session folder, and the two that call Claude
+// also take --style.
+func stageCommand(stage, usage string, flags ...cli.Flag) *cli.Command {
 	return &cli.Command{
 		Name:      stage,
 		Usage:     usage,
 		ArgsUsage: "[session]",
+		Flags:     append([]cli.Flag{dayFlag()}, flags...),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return cmdStage(ctx, stage, cmd.Args().First())
+			return cmdStage(ctx, stage, cmd.Args().First(), cmd.String("style"), cmd.String("day"))
 		},
+	}
+}
+
+// dayFlag replays a whole day. The transcripts are kept, so a day already
+// processed can be run again — in another style, or after fixing a setting —
+// without touching the recordings.
+func dayFlag() cli.Flag {
+	return &cli.StringFlag{
+		Name:    "day",
+		Aliases: []string{"d"},
+		Usage:   "toutes les sessions d'un jour : `AAAA-MM-JJ`, « hier », ou « -2 »",
+	}
+}
+
+// styleFlag overrides claude.style for one run. Because the transcript is kept,
+// this is what lets you re-read a meeting in another voice without recording it
+// again: `godio extract --style eli5`.
+func styleFlag() cli.Flag {
+	return &cli.StringFlag{
+		Name:  "style",
+		Usage: "style des notes : " + strings.Join(assets.Styles, " | ") + " (défaut : claude.style)",
 	}
 }
 
@@ -339,6 +386,15 @@ func cmdDoctor() error {
 
 	fmt.Println("Claude Code :")
 	report("claude", claudecli.Runner{Executable: cfg.Claude.Executable}.Check())
+	fmt.Printf("  · modèle     : %s\n", cfg.Claude.Model)
+	fmt.Printf("  · style      : %s (claude.style)\n", cfg.Claude.Style)
+
+	fmt.Println("Sessions :")
+	if root, err := config.SessionsDir(); err == nil {
+		fmt.Printf("  · dossier    : %s\n", root)
+	}
+	fmt.Printf("  · audio      : %s\n", retentionLine(cfg.Sessions.KeepAudioDays, "conservé"))
+	fmt.Printf("  · sessions   : %s\n", retentionLine(cfg.Sessions.KeepDays, "conservées"))
 
 	fmt.Println("Audio :")
 	if d := cfg.Audio.AutoStop.Duration; d > 0 {
@@ -374,6 +430,15 @@ func cmdDoctor() error {
 	}
 	fmt.Println("\nTout est prêt.")
 	return nil
+}
+
+// retentionLine describes one half of the retention policy in words, since
+// "0" on its own reads like "delete immediately" rather than "keep forever".
+func retentionLine(days int, kept string) string {
+	if days <= 0 {
+		return kept + " indéfiniment (0)"
+	}
+	return fmt.Sprintf("%s %d jour(s)", kept, days)
 }
 
 // cmdSetup downloads whisper.cpp and the models.
@@ -642,17 +707,25 @@ func startRecording(cfg config.Config) (*audio.Recorder, *pipeline.Session, erro
 	return rec, sess, nil
 }
 
-func cmdStage(ctx context.Context, stage, session string) error {
+func cmdStage(ctx context.Context, stage, session, style, day string) error {
 	cfg, err := load()
 	if err != nil {
 		return err
 	}
+	// A bad style in config.toml falls back silently; a bad --style is a typo
+	// the user is standing right there to fix, so say so instead of quietly
+	// producing notes in another style.
+	if style != "" {
+		if !assets.ValidStyle(style) {
+			return fmt.Errorf("style inconnu %q (styles : %s)", style, strings.Join(assets.Styles, ", "))
+		}
+		cfg.Claude.Style = style
+	}
 
-	sess, err := resolveSession(session)
+	sessions, err := resolveSessions(session, day)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Session : %s\n", sess.Dir)
 
 	p := pipeline.Pipeline{
 		Cfg: cfg,
@@ -664,6 +737,20 @@ func cmdStage(ctx context.Context, stage, session string) error {
 			}
 		},
 	}
+	for i, sess := range sessions {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("Session : %s\n", sess.Dir)
+		if err := runStage(ctx, p, stage, sess); err != nil {
+			return fmt.Errorf("%s : %w", filepath.Base(sess.Dir), err)
+		}
+	}
+	return nil
+}
+
+// runStage runs one stage against one session.
+func runStage(ctx context.Context, p pipeline.Pipeline, stage string, sess *pipeline.Session) error {
 	switch stage {
 	case "transcribe":
 		text, err := p.Transcribe(ctx, sess)
@@ -693,14 +780,91 @@ func cmdStage(ctx context.Context, stage, session string) error {
 	return nil
 }
 
-// resolveSession takes an explicit session folder, or the most recent one.
-func resolveSession(dir string) (*pipeline.Session, error) {
-	if dir != "" {
-		return pipeline.OpenSession(dir)
+// resolveSessions picks what a stage runs on: an explicit folder, every
+// session of a day, or — as before — the most recent one.
+func resolveSessions(dir, day string) ([]*pipeline.Session, error) {
+	if dir != "" && day != "" {
+		return nil, errors.New("--day et un dossier de session s'excluent")
 	}
+	if dir != "" {
+		s, err := pipeline.OpenSession(dir)
+		if err != nil {
+			return nil, err
+		}
+		return []*pipeline.Session{s}, nil
+	}
+
 	root, err := config.SessionsDir()
 	if err != nil {
 		return nil, err
 	}
-	return pipeline.Latest(root)
+	if day != "" {
+		d, err := pipeline.ParseDay(day, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		return pipeline.OnDay(root, d)
+	}
+
+	s, err := pipeline.Latest(root)
+	if err != nil {
+		return nil, err
+	}
+	return []*pipeline.Session{s}, nil
+}
+
+// cmdPurge applies the retention policy, reporting what it freed.
+func cmdPurge(cmd *cli.Command) error {
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+	if cmd.IsSet("keep-days") {
+		cfg.Sessions.KeepDays = int(cmd.Int("keep-days"))
+	}
+	if cmd.IsSet("keep-audio-days") {
+		cfg.Sessions.KeepAudioDays = int(cmd.Int("keep-audio-days"))
+	}
+
+	root, err := config.SessionsDir()
+	if err != nil {
+		return err
+	}
+	p := pipeline.Pipeline{Cfg: cfg}
+	policy := p.Retention()
+	if !policy.Enabled() {
+		fmt.Println("Aucune purge configurée : sessions.keep_days et sessions.keep_audio_days valent 0.")
+		fmt.Println("Essayez « godio purge --keep-days 90 --keep-audio-days 7 --dry-run ».")
+		return nil
+	}
+
+	dry := cmd.Bool("dry-run")
+	res, err := pipeline.Purge(root, policy, time.Now(), dry)
+	if err != nil {
+		return err
+	}
+	printPurge(res, dry)
+	return nil
+}
+
+func printPurge(res pipeline.Purged, dry bool) {
+	verb, freed := "Supprimé", "libérés"
+	if dry {
+		verb, freed = "À supprimer", "seraient libérés"
+	}
+	if res.Empty() {
+		fmt.Println("Rien à supprimer.")
+	}
+	for _, name := range res.Audio {
+		fmt.Printf("  %s : audio (%s)\n", name, verb)
+	}
+	for _, name := range res.Sessions {
+		fmt.Printf("  %s : session entière (%s)\n", name, verb)
+	}
+	if !res.Empty() {
+		fmt.Printf("%.1f Mo %s\n", float64(res.Bytes)/(1<<20), freed)
+	}
+	if res.Kept > 0 {
+		fmt.Printf("%d session(s) conservée(s) : pas de notes.md, le traitement n'est jamais allé au bout.\n", res.Kept)
+	}
 }

@@ -91,6 +91,47 @@ click would keep recording forever, which is the exact failure this prevents.
 `godio doctor` prints the current setting, and `godio record` shows the
 countdown inline next to the VU meters.
 
+## Note style
+
+The transcript is verbatim; the *notes* are what Claude writes from it, and how
+much they say is a setting:
+
+```toml
+[claude]
+style = "normal"   # bullets | normal | detailed | eli5
+```
+
+| Style      | What you get                                                                 |
+| ---------- | ---------------------------------------------------------------------------- |
+| `bullets`  | telegraphic — one line per point, and nothing that does not fit on one        |
+| `normal`   | **default** — a one-sentence summary and 3 to 7 factual points                |
+| `detailed` | 8 to 15 points with sub-points: the figures, the reasons, the open questions  |
+| `eli5`     | written for someone outside the subject; every acronym explained once         |
+
+The four sections — summary, key points, decisions, actions — are the same
+whatever the style, because the daily note and the action count depend on them.
+Only the writing changes.
+
+Pick it from the tray (**Configuration → Style des notes**), or per run:
+
+```powershell
+.\godio.exe extract --style eli5              # the last meeting, re-read
+.\godio.exe extract --day 2026-10-12 --style detailed
+.\godio.exe extract --day hier --style bullets
+```
+
+`--day` takes `AAAA-MM-JJ`, `hier` / `yesterday`, `today`, or a negative number
+of days (`-2`), and runs over **every** meeting of that day, oldest first. The
+transcript is kept, so replaying a day costs one Claude call per meeting and no
+audio at all — which is the point: a day recorded in `normal` can be read back
+in `eli5` months later.
+
+Note that `extract` only rewrites `notes.md`: running `write` afterwards appends
+a *second* entry to the daily note rather than replacing the first.
+
+No style loosens the "invent nothing" rule — `eli5` may explain what a term
+means, never what was said about it.
+
 ## Transcription speed
 
 Two settings in `config.toml`:
@@ -143,15 +184,16 @@ compare two presets — without re-recording anything.
 .\godio.exe setup [--dry-run]    # install the dependencies
 .\godio.exe record -s 30         # record for 30 s, with VU meters
 .\godio.exe transcribe           # transcribe the latest session
-.\godio.exe extract              # regenerate the notes through Claude
+.\godio.exe extract [--style S]  # regenerate the notes through Claude
+.\godio.exe purge [--dry-run]    # apply the retention policy
 .\godio.exe write                # append to the daily note
 .\godio.exe process              # all three in one go
 .\godio.exe config [edit]        # show or open the configuration
 ```
 
 With no argument these commands act on the most recent session; a session path
-can also be passed explicitly. `godio --help` lists the commands and
-`godio <command> --help` details one of them.
+can be passed explicitly, or `--day` to replay a whole day. `godio --help`
+lists the commands and `godio <command> --help` details one of them.
 
 ## Files
 
@@ -165,8 +207,39 @@ can also be passed explicitly. `godio --help` lists the commands and
 | └ `notes.md`                            | the notes produced by Claude                  |
 | └ `session.json`                        | timestamp, devices, per-track offsets         |
 
-Recordings are never deleted automatically: purge `sessions\` yourself whenever
-you feel like it.
+### Retention
+
+Recordings are kept forever by default. Two settings change that, and they are
+separate because the costs are:
+
+```toml
+[sessions]
+keep_audio_days = 0   # drop me.wav / them.wav after N days (0 = never)
+keep_days       = 0   # delete the whole session folder after N days (0 = never)
+```
+
+The WAV pair is about **115 MB per hour**; the transcript and the notes are a
+few kilobytes. Dropping the audio alone therefore recovers nearly all the space
+while leaving the meeting replayable — `extract --day` still works on a session
+whose recordings are gone. `keep_audio_days = 7` with `keep_days = 365` is a
+reasonable pair.
+
+Three rules make this safe to leave on:
+
+- a session that never produced `notes.md` is **never** purged, whatever its
+  age — an unprocessed recording is the only copy of that meeting;
+- only folders whose name is a session timestamp are touched, so anything else
+  you put in `sessions\` is left alone;
+- age comes from the folder name, not from the file dates, so re-running
+  `extract` does not quietly extend a meeting's life.
+
+The tray applies the policy after each meeting it finishes. By hand:
+
+```powershell
+.\godio.exe purge --dry-run                     # what the config would delete
+.\godio.exe purge --keep-audio-days 7 --dry-run # try a policy without saving it
+.\godio.exe purge                               # apply it
+```
 
 ## Development
 
