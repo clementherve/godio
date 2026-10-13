@@ -31,6 +31,9 @@ type App struct {
 	rec     *audio.Recorder
 	sess    *pipeline.Session
 	working bool
+	// autoWarned keeps the silence warning to one notification per recording,
+	// instead of one every 500 ms for the whole countdown.
+	autoWarned bool
 
 	mToggle *systray.MenuItem
 	mStatus *systray.MenuItem
@@ -282,6 +285,7 @@ func (a *App) start() {
 
 	a.mu.Lock()
 	a.actx, a.rec, a.sess = actx, rec, sess
+	a.autoWarned = false
 	a.mu.Unlock()
 
 	a.mToggle.SetTitle("Arrêter l'enregistrement")
@@ -385,6 +389,65 @@ func (a *App) refresh() {
 	systray.SetTooltip(fmt.Sprintf("Micro %s %.0f dB\nSystème %s %.0f dB",
 		mark(me.Active), me.DBFS, mark(them.Active), them.DBFS))
 	a.mStatus.SetTitle(fmt.Sprintf("Micro %s · Système %s", mark(me.Active), mark(them.Active)))
+
+	a.checkAutoStop(rec)
+}
+
+// checkAutoStop ends a recording that nobody is feeding any more.
+//
+// It runs on the tray's 500 ms tick, so the countdown is accurate to half a
+// second and any sound at all resets it — the warning is a reprieve, not a
+// prompt that has to be answered.
+func (a *App) checkAutoStop(rec *audio.Recorder) {
+	watchdog := a.autoStop()
+	if !watchdog.Enabled() {
+		return
+	}
+
+	silentFor := rec.SilentFor()
+	switch watchdog.State(silentFor) {
+	case audio.AutoStopWarn:
+		left := watchdog.Remaining(silentFor)
+		a.mStatus.SetTitle(fmt.Sprintf("Silence — arrêt automatique dans %s", left))
+		systray.SetTooltip(fmt.Sprintf("godio — silence, arrêt dans %s", left))
+
+		a.mu.Lock()
+		first := !a.autoWarned
+		a.autoWarned = true
+		a.mu.Unlock()
+		if first {
+			// A toast, not a modal: the reason the room went quiet is usually
+			// that nobody is at the machine, and a dialog waiting for a click
+			// would keep the recording running forever — the exact failure
+			// this feature exists to prevent.
+			a.notifier.Done("godio — silence détecté",
+				fmt.Sprintf("Arrêt automatique de l'enregistrement dans %s.\nParlez pour l'annuler.", left))
+		}
+
+	case audio.AutoStopFire:
+		a.mStatus.SetTitle("Arrêt automatique après " + silentFor.Round(time.Second).String() + " de silence")
+		a.notifier.Done("godio — arrêt automatique",
+			fmt.Sprintf("Silence des deux côtés pendant %s : l'enregistrement est arrêté et traité.",
+				watchdog.After))
+		a.stop()
+
+	default:
+		// Someone spoke: forget the warning so a later silence warns again.
+		a.mu.Lock()
+		a.autoWarned = false
+		a.mu.Unlock()
+	}
+}
+
+// autoStop reads the watchdog settings under the lock, since « Recharger »
+// can swap the configuration mid-recording.
+func (a *App) autoStop() audio.AutoStop {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return audio.AutoStop{
+		After:   a.cfg.Audio.AutoStop.Duration,
+		Warning: a.cfg.Audio.AutoStopWarning.Duration,
+	}
 }
 
 func mark(active bool) string {

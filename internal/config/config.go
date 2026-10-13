@@ -35,6 +35,12 @@ type Audio struct {
 	LoopbackDevice string   `toml:"loopback_device"`
 	SilenceDBFS    float64  `toml:"silence_dbfs"`
 	ActivityWindow Duration `toml:"activity_window"`
+	// AutoStop ends a recording once both tracks have been silent for this
+	// long — the meeting is over and nobody clicked stop. "0s" disables it.
+	AutoStop Duration `toml:"auto_stop"`
+	// AutoStopWarning is how long before AutoStop the user is warned, giving
+	// anyone still at the machine time to say something and cancel it.
+	AutoStopWarning Duration `toml:"auto_stop_warning"`
 }
 
 // Whisper points at the whisper.cpp binary and its models, and tunes how hard
@@ -106,8 +112,10 @@ func Default() Config {
 			Heading:     "## Réunions",
 		},
 		Audio: Audio{
-			SilenceDBFS:    -45,
-			ActivityWindow: Duration{10 * time.Second},
+			SilenceDBFS:     -45,
+			ActivityWindow:  Duration{10 * time.Second},
+			AutoStop:        Duration{5 * time.Minute},
+			AutoStopWarning: Duration{30 * time.Second},
 		},
 		Whisper: Whisper{
 			Exe:      filepath.Join("whisper", "whisper-cli"+exeSuffix()),
@@ -187,6 +195,10 @@ const header = `# Configuration de godio.
 #   whisper.preset   fast | balanced | accurate   (vitesse <-> précision)
 #   whisper.backend  auto | cuda | cpu            (auto = CUDA si GPU NVIDIA)
 #   whisper.threads  0 = un par coeur physique
+#
+#   audio.auto_stop          arrêt après ce temps de silence des deux côtés
+#                            ("0s" = jamais)
+#   audio.auto_stop_warning  préavis avant cet arrêt ("0s" = aucun)
 
 `
 
@@ -231,6 +243,14 @@ func (c *Config) normalise() {
 	}
 	if c.Audio.ActivityWindow.Duration <= 0 {
 		c.Audio.ActivityWindow = d.Audio.ActivityWindow
+	}
+	// Zero is a meaningful value for both of these — it switches the watchdog,
+	// or just its warning, off — so only a nonsensical negative is corrected.
+	if c.Audio.AutoStop.Duration < 0 {
+		c.Audio.AutoStop = d.Audio.AutoStop
+	}
+	if c.Audio.AutoStopWarning.Duration < 0 {
+		c.Audio.AutoStopWarning = d.Audio.AutoStopWarning
 	}
 	if c.Whisper.Language == "" {
 		c.Whisper.Language = d.Whisper.Language

@@ -69,6 +69,28 @@ A Windows notification is shown once the meeting has been processed —
 transcription takes long enough that you will have walked away from the
 machine.
 
+## Automatic stop
+
+A meeting ends, everyone hangs up, and nobody clicks stop. godio watches for
+that: once **both** tracks have been silent for five minutes, it stops the
+recording itself and runs the pipeline.
+
+```toml
+[audio]
+auto_stop         = "5m0s"   # silence on both sides before stopping ("0s" = never)
+auto_stop_warning = "30s"    # notice given before that ("0s" = none)
+```
+
+Thirty seconds before the stop, the tray status counts down and a notification
+appears. Any sound on either track cancels it and resets the clock, so a long
+pause in a real meeting costs you nothing — the warning is a reprieve, not a
+question to answer. It is deliberately **not** a modal dialog: the usual reason
+a room goes quiet is that nobody is at the machine, and a dialog waiting for a
+click would keep recording forever, which is the exact failure this prevents.
+
+`godio doctor` prints the current setting, and `godio record` shows the
+countdown inline next to the VU meters.
+
 ## Transcription speed
 
 Two settings in `config.toml`:

@@ -59,6 +59,15 @@ func (l *Level) DBFS() float64 {
 	return l.lastDBFS
 }
 
+// LastHeard reports when this side last carried sound above the threshold.
+// The boolean is false when it never has, which the caller must treat as
+// "silent since the recording began" rather than "silent since the zero time".
+func (l *Level) LastHeard() (time.Time, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastHeard, l.everHeard
+}
+
 // Active reports whether this side carried sound within the activity window.
 func (l *Level) Active() bool {
 	l.mu.Lock()

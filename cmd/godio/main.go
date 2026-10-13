@@ -341,6 +341,15 @@ func cmdDoctor() error {
 	report("claude", claudecli.Runner{Executable: cfg.Claude.Executable}.Check())
 
 	fmt.Println("Audio :")
+	if d := cfg.Audio.AutoStop.Duration; d > 0 {
+		warn := "sans préavis"
+		if w := cfg.Audio.AutoStopWarning.Duration; w > 0 {
+			warn = "préavis " + w.String()
+		}
+		fmt.Printf("  · arrêt auto : après %s de silence (%s)\n", d, warn)
+	} else {
+		fmt.Println("  · arrêt auto : désactivé (audio.auto_stop = \"0s\")")
+	}
 	actx, err := audio.NewContext()
 	if err != nil {
 		report("backend audio", err)
@@ -495,11 +504,20 @@ func cmdRecord(ctx context.Context, seconds int) error {
 		defer cancel()
 	}
 
+	watchdog := audio.AutoStop{
+		After:   cfg.Audio.AutoStop.Duration,
+		Warning: cfg.Audio.AutoStopWarning.Duration,
+	}
+	if watchdog.Enabled() {
+		fmt.Printf("Arrêt automatique après %s de silence.\n", watchdog.After)
+	}
+
 	// A live level readout turns the most likely failure — loopback pointed at
 	// the wrong output, so the other side records silence — into something
 	// visible within seconds instead of after the meeting.
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	autoStopped := false
 loop:
 	for {
 		select {
@@ -507,11 +525,25 @@ loop:
 			break loop
 		case <-ticker.C:
 			l := rec.Levels()
-			fmt.Printf("\r  moi %s  |  eux %s   ",
+			line := fmt.Sprintf("  moi %s  |  eux %s   ",
 				meter(l[audio.TrackMe]), meter(l[audio.TrackThem]))
+
+			silentFor := rec.SilentFor()
+			switch watchdog.State(silentFor) {
+			case audio.AutoStopFire:
+				autoStopped = true
+				fmt.Printf("\r%s\n", line)
+				break loop
+			case audio.AutoStopWarn:
+				line += fmt.Sprintf("arrêt dans %s ", watchdog.Remaining(silentFor))
+			}
+			fmt.Printf("\r%s", line)
 		}
 	}
 	fmt.Println()
+	if autoStopped {
+		fmt.Printf("Silence des deux côtés pendant %s : arrêt automatique.\n", watchdog.After)
+	}
 
 	res, err := rec.Stop()
 	if err != nil {

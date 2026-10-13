@@ -217,6 +217,40 @@ func (r *Recorder) BothActive() bool {
 	return true
 }
 
+// SilentFor reports how long *both* tracks have been quiet.
+//
+// Silence is measured from the most recent sound on either side, because a
+// meeting where only one person has spoken for the last minute is still a
+// meeting. Until anything at all has been heard, it is measured from the start
+// of the recording, so a session opened against a dead loopback device still
+// trips the watchdog instead of running until the disk fills.
+func (r *Recorder) SilentFor() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.running {
+		return 0
+	}
+
+	levels := make([]*Level, 0, len(r.streams))
+	for _, s := range r.streams {
+		levels = append(levels, s.level)
+	}
+	return time.Since(silenceSince(r.started, levels))
+}
+
+// silenceSince returns the instant the recording last carried sound on any
+// track, falling back to its start. Split out from SilentFor so the rule can
+// be tested without opening a capture device.
+func silenceSince(started time.Time, levels []*Level) time.Time {
+	since := started
+	for _, l := range levels {
+		if at, heard := l.LastHeard(); heard && at.After(since) {
+			since = at
+		}
+	}
+	return since
+}
+
 // Running reports whether a recording is in progress.
 func (r *Recorder) Running() bool {
 	r.mu.Lock()
