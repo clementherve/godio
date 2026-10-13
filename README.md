@@ -40,6 +40,47 @@ closed**. That is the one to pin, or to put in your startup folder.
 `godio.exe` stays a console application so that its commands can print
 something.
 
+## Updating
+
+```powershell
+.\godio.exe update --check   # is there a newer release?
+.\godio.exe update           # download it, verify it, install it
+```
+
+`update` replaces `godio.exe` and `godio-tray.exe` in place with the latest
+GitHub release. Everything is downloaded and checked **before** anything on
+disk moves: each file is hashed as it streams and compared against the SHA-256
+digest GitHub publishes for that asset, and if any swap fails the previous
+binaries are put back. A half-updated pair — a new CLI beside an old tray — is
+the one outcome worth engineering against, so it is the one thing this cannot
+leave behind.
+
+The tray offers the same thing under **Mettre à jour godio…**, never during a
+recording or while a meeting is being processed. It can also look for a new
+release when it starts:
+
+```toml
+[update]
+check_on_start = false   # check at launch and notify (never installs)
+prerelease     = false
+```
+
+Installing is always an explicit click; nothing updates itself in the
+background.
+
+A running executable cannot delete itself on Windows, so the previous version
+is renamed to `godio.exe.old` and swept on the next launch — and the update
+only takes effect once godio is restarted, which both the CLI and the tray say.
+The tray's **Redémarrer maintenant** does it for you.
+
+Two caveats: the binaries are unsigned, so SmartScreen or an antivirus may have
+an opinion about a freshly written `.exe`; and if godio lives somewhere you
+cannot write, such as `Program Files`, the swap fails with a message saying so
+— move the folder rather than elevating.
+
+> `update` needs the repository to be public. While it is private every release
+> asset returns 404, and godio says so rather than reporting a bare "not found".
+
 ## The tray icon
 
 Two dots, stacked to the right of the microphone:
@@ -182,6 +223,7 @@ compare two presets — without re-recording anything.
 .\godio.exe devices              # list the audio devices
 .\godio.exe doctor               # check the configuration, the GPU, the preset
 .\godio.exe setup [--dry-run]    # install the dependencies
+.\godio.exe update [--check]     # update godio itself
 .\godio.exe record -s 30         # record for 30 s, with VU meters
 .\godio.exe transcribe           # transcribe the latest session
 .\godio.exe extract [--style S]  # regenerate the notes through Claude

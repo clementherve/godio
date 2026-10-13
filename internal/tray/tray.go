@@ -19,12 +19,15 @@ import (
 	"github.com/clementherve/godio/internal/deps"
 	"github.com/clementherve/godio/internal/notify"
 	"github.com/clementherve/godio/internal/pipeline"
+	"github.com/clementherve/godio/internal/selfupdate"
 	"github.com/clementherve/godio/internal/winui"
 )
 
 // App holds the tray's state.
 type App struct {
 	cfg config.Config
+	// version is the running build, used to decide whether a release is newer.
+	version string
 
 	mu      sync.Mutex
 	actx    *audio.Context
@@ -41,10 +44,12 @@ type App struct {
 	mFolder *systray.MenuItem
 	mQuit   *systray.MenuItem
 
-	mVault  *systray.MenuItem
-	mEdit   *systray.MenuItem
-	mReload *systray.MenuItem
-	mSetup  *systray.MenuItem
+	mVault   *systray.MenuItem
+	mEdit    *systray.MenuItem
+	mReload  *systray.MenuItem
+	mSetup   *systray.MenuItem
+	mUpdate  *systray.MenuItem
+	mRestart *systray.MenuItem
 
 	styleItems []*styleItem
 
@@ -67,8 +72,8 @@ type styleItem struct {
 }
 
 // Run starts the tray and blocks until the user quits.
-func Run(cfg config.Config) error {
-	a := &App{cfg: cfg, lastState: -1, notifier: notify.New()}
+func Run(cfg config.Config, version string) error {
+	a := &App{cfg: cfg, version: version, lastState: -1, notifier: notify.New()}
 	systray.Run(a.onReady, a.onExit)
 	return nil
 }
@@ -91,6 +96,11 @@ func (a *App) onReady() {
 	a.mEdit = cfgMenu.AddSubMenuItem("Ouvrir config.toml", "")
 	a.mReload = cfgMenu.AddSubMenuItem("Recharger", "")
 	a.mSetup = systray.AddMenuItem("Installer / mettre à jour les modèles…", "")
+	// The sibling of the item above: that one updates the models, this one
+	// updates godio.
+	a.mUpdate = systray.AddMenuItem("Mettre à jour godio…", "Télécharge la dernière version depuis GitHub")
+	a.mRestart = systray.AddMenuItem("Redémarrer maintenant", "Relance godio avec la version installée")
+	a.mRestart.Hide()
 
 	systray.AddSeparator()
 	a.mNote = systray.AddMenuItem("Ouvrir la note du jour", "")
@@ -100,6 +110,7 @@ func (a *App) onReady() {
 	a.mQuit = systray.AddMenuItem("Quitter", "")
 
 	go a.loop()
+	go a.checkUpdate()
 }
 
 func (a *App) onExit() {
@@ -225,6 +236,8 @@ func (a *App) loop() {
 	watch(a.mEdit, a.editConfig)
 	watch(a.mReload, a.reloadConfig)
 	watch(a.mSetup, func() { go a.runSetup() })
+	watch(a.mUpdate, func() { go a.runUpdate() })
+	watch(a.mRestart, a.restart)
 	watch(a.mNote, func() { open(a.cfg.DailyNotePath(time.Now())) })
 	watch(a.mFolder, a.openSessionFolder)
 	watch(a.mQuit, func() { systray.Quit() })
@@ -679,6 +692,135 @@ func (a *App) runSetup() {
 	a.mStatus.SetTitle("Dépendances installées (" + string(plan.Backend) + ")")
 	a.notifier.Done("godio — installation terminée",
 		"whisper.cpp "+plan.Release+" ("+string(plan.Backend)+") et les modèles sont prêts.")
+}
+
+// checkUpdate asks GitHub, at startup, whether a newer release exists.
+//
+// It only ever reports: installing an executable stays an explicit click. The
+// check is opt-in because a tray that phones home the moment it launches is
+// not something to switch on for someone without asking.
+func (a *App) checkUpdate() {
+	a.mu.Lock()
+	cfg, version := a.cfg, a.version
+	a.mu.Unlock()
+
+	if !cfg.Update.CheckOnStart || selfupdate.IsDev(version) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	avail, err := selfupdate.Check(ctx, version, cfg.Update.Prerelease)
+	if err != nil || !avail.Newer {
+		// A failed check is not worth interrupting anyone over: the menu item
+		// is there whenever they want to look.
+		return
+	}
+
+	a.mUpdate.SetTitle("Mettre à jour godio (" + avail.Latest + ")")
+	a.mStatus.SetTitle("Version " + avail.Latest + " disponible")
+	a.notifier.Done("godio — mise à jour disponible",
+		fmt.Sprintf("%s → %s (%s).\nMenu « Mettre à jour godio… » pour l'installer.",
+			version, avail.Latest, avail.HumanSize()))
+}
+
+// runUpdate downloads and installs the latest release.
+func (a *App) runUpdate() {
+	a.mu.Lock()
+	busy := a.working || (a.rec != nil && a.rec.Running())
+	if !busy {
+		a.working = true
+	}
+	cfg, version := a.cfg, a.version
+	a.mu.Unlock()
+
+	if busy {
+		// Swapping the binaries mid-meeting would be the worst possible moment.
+		a.mStatus.SetTitle("Occupé — réessayez après l'enregistrement")
+		return
+	}
+	defer func() {
+		a.mu.Lock()
+		a.working = false
+		a.mu.Unlock()
+		a.mUpdate.Enable()
+	}()
+
+	a.mUpdate.Disable()
+	a.setIcon(assets.IconProcessing)
+	a.mStatus.SetTitle("Recherche d'une mise à jour…")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	avail, err := selfupdate.Check(ctx, version, cfg.Update.Prerelease)
+	if err != nil {
+		a.updateFailed(err)
+		return
+	}
+	if !avail.Newer {
+		a.setIcon(assets.IconIdle)
+		a.mStatus.SetTitle("godio est à jour (" + version + ")")
+		return
+	}
+
+	dir, err := selfupdate.InstallDir()
+	if err != nil {
+		a.updateFailed(err)
+		return
+	}
+	selfupdate.CleanupOld(dir)
+
+	applied, err := selfupdate.Apply(ctx, avail, dir, func(stage string, done, total int64) {
+		if total > 0 {
+			a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, done*100/total))
+			return
+		}
+		a.mStatus.SetTitle(fmt.Sprintf("%s %d Mo", stage, done/(1<<20)))
+	})
+	if err != nil {
+		a.updateFailed(err)
+		return
+	}
+
+	// The running process is still the old code, whatever the files now say.
+	a.setIcon(assets.IconIdle)
+	a.mUpdate.SetTitle("godio " + applied.To + " installé")
+	a.mStatus.SetTitle("Redémarrez pour utiliser " + applied.To)
+	a.mRestart.Show()
+	a.notifier.Done("godio — mise à jour installée",
+		fmt.Sprintf("%s → %s.\nRedémarrez godio pour l'utiliser.", applied.From, applied.To))
+}
+
+// updateFailed reports an update error without dressing it up as a failed
+// meeting: nothing was recorded, and nothing was lost.
+func (a *App) updateFailed(err error) {
+	a.setIcon(assets.IconIdle)
+	a.mStatus.SetTitle("Mise à jour : " + truncate(err.Error(), 60))
+	a.notifier.Failed(truncate(err.Error(), 200))
+}
+
+// restart launches the freshly installed tray and quits this one.
+func (a *App) restart() {
+	a.mu.Lock()
+	busy := a.working || (a.rec != nil && a.rec.Running())
+	a.mu.Unlock()
+	if busy {
+		a.mStatus.SetTitle("Occupé — réessayez après l'enregistrement")
+		return
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		a.updateFailed(err)
+		return
+	}
+	if err := exec.Command(exe).Start(); err != nil {
+		a.updateFailed(err)
+		return
+	}
+	systray.Quit()
 }
 
 // setIcon avoids redundant redraws, which flicker on some Windows builds.

@@ -14,8 +14,14 @@ import (
 	"github.com/clementherve/godio/internal/claudecli"
 	"github.com/clementherve/godio/internal/config"
 	"github.com/clementherve/godio/internal/notify"
+	"github.com/clementherve/godio/internal/selfupdate"
 	"github.com/clementherve/godio/internal/tray"
 )
+
+// version is stamped at build time, exactly as it is for godio.exe: CI passes
+// -X main.version=<tag> to both builds, so this variable has to exist here too
+// or the tray cannot tell whether it is out of date.
+var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -28,6 +34,12 @@ func main() {
 }
 
 func run() error {
+	// A previous update left the binary it replaced behind; this launch is the
+	// first moment it can be deleted.
+	if dir, err := selfupdate.InstallDir(); err == nil {
+		selfupdate.CleanupOld(dir)
+	}
+
 	cfg, created, err := config.Load()
 	if err != nil {
 		return err
@@ -47,5 +59,5 @@ func run() error {
 		notify.New().Failed(err.Error())
 	}
 
-	return tray.Run(cfg)
+	return tray.Run(cfg, version)
 }

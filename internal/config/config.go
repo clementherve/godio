@@ -22,6 +22,19 @@ type Config struct {
 	Whisper  Whisper  `toml:"whisper"`
 	Claude   Claude   `toml:"claude"`
 	Sessions Sessions `toml:"sessions"`
+	Update   Update   `toml:"update"`
+}
+
+// Update configures godio's own updater.
+//
+// Nothing here ever installs anything on its own: the check only reports, and
+// replacing an executable stays an explicit action.
+type Update struct {
+	// CheckOnStart has the tray ask GitHub for the latest release when it
+	// launches, and notify only if there is one newer than the running build.
+	CheckOnStart bool `toml:"check_on_start"`
+	// Prerelease includes pre-releases in that comparison.
+	Prerelease bool `toml:"prerelease"`
 }
 
 // Sessions is the retention policy for recorded meetings.
@@ -236,6 +249,10 @@ const header = `# Configuration de godio.
 #   sessions.keep_days        supprime tout le dossier de session après N jours
 #                             (0 = jamais). Une réunion sans notes.md n'est
 #                             jamais supprimée.
+#
+#   update.check_on_start  la zone de notification vérifie au démarrage s'il
+#                          existe une version plus récente (ne l'installe pas)
+#   update.prerelease      inclut les pré-versions dans cette comparaison
 #
 #   audio.auto_stop          arrêt après ce temps de silence des deux côtés
 #                            ("0s" = jamais)

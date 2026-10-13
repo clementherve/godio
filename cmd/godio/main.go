@@ -22,6 +22,7 @@ import (
 	"github.com/clementherve/godio/internal/config"
 	"github.com/clementherve/godio/internal/deps"
 	"github.com/clementherve/godio/internal/pipeline"
+	"github.com/clementherve/godio/internal/selfupdate"
 )
 
 // version is stamped at build time by the CI workflow:
@@ -37,6 +38,12 @@ func main() {
 	// the work in progress rather than killing the binary mid-write.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	// A previous update left the binary it replaced behind, because a running
+	// executable cannot delete itself. This launch is the first chance to.
+	if dir, err := selfupdate.InstallDir(); err == nil {
+		selfupdate.CleanupOld(dir)
+	}
 
 	if err := newApp().Run(ctx, os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "erreur :", err)
@@ -175,6 +182,28 @@ func newApp() *cli.Command {
 				},
 			},
 			{
+				Name:  "update",
+				Usage: "met à jour godio depuis GitHub",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "check",
+						Aliases: []string{"c"},
+						Usage:   "indique s'il existe une version plus récente, sans rien installer",
+					},
+					&cli.BoolFlag{
+						Name:  "prerelease",
+						Usage: "considère aussi les pré-versions",
+					},
+					&cli.BoolFlag{
+						Name:  "force",
+						Usage: "installe même si la version actuelle est déjà à jour, ou est un build local",
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return cmdUpdate(ctx, cmd.Bool("check"), cmd.Bool("prerelease"), cmd.Bool("force"))
+				},
+			},
+			{
 				Name:  "version",
 				Usage: "affiche la version",
 				Action: func(context.Context, *cli.Command) error {
@@ -245,6 +274,74 @@ func styleFlag() cli.Flag {
 		Name:  "style",
 		Usage: "style des notes : " + strings.Join(assets.Styles, " | ") + " (défaut : claude.style)",
 	}
+}
+
+// cmdUpdate replaces godio's binaries with the latest release.
+//
+// This is the sibling of `setup`: that one updates the models, this one
+// updates godio itself.
+func cmdUpdate(ctx context.Context, check, prerelease, force bool) error {
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+	if cfg.Update.Prerelease {
+		prerelease = true
+	}
+
+	fmt.Printf("Version installée : %s\n", version)
+	fmt.Println("Recherche de la dernière version…")
+
+	avail, err := selfupdate.Check(ctx, version, prerelease)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Dernière version   : %s\n", avail.Latest)
+
+	switch {
+	case avail.Newer:
+		fmt.Printf("Une mise à jour est disponible (%s).\n", avail.HumanSize())
+	case selfupdate.IsDev(version):
+		fmt.Println("Build local : aucune comparaison possible (« --force » pour installer quand même).")
+	default:
+		fmt.Println("godio est à jour.")
+	}
+
+	if check {
+		return nil
+	}
+	if !avail.Newer && !force {
+		return nil
+	}
+
+	dir, err := selfupdate.InstallDir()
+	if err != nil {
+		return err
+	}
+	// Left over from a previous update: sweep before taking more space.
+	selfupdate.CleanupOld(dir)
+
+	fmt.Printf("Installation dans %s\n", dir)
+	applied, err := selfupdate.Apply(ctx, avail, dir, func(stage string, done, total int64) {
+		if total <= 0 {
+			fmt.Printf("\r  %-16s %d Mo", stage, done/(1<<20))
+			return
+		}
+		pc := int(done * 100 / total)
+		fmt.Printf("\r  %-16s %s %3d%%", stage, bar(pc), pc)
+		if pc >= 100 {
+			fmt.Println()
+		}
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\n%s → %s : %s\n", applied.From, applied.To, strings.Join(applied.Replaced, ", "))
+	// The running process still holds the old code; nothing it does from here
+	// reflects the update.
+	fmt.Println("Redémarrez godio-tray.exe pour utiliser la nouvelle version.")
+	return nil
 }
 
 // printVersion reports the build alongside the toolchain that produced it,
@@ -357,6 +454,13 @@ func cmdDoctor() error {
 		}
 		fmt.Printf("  ✓ %s\n", label)
 	}
+
+	fmt.Printf("godio %s", version)
+	if selfupdate.IsDev(version) {
+		fmt.Print(" (build local — « godio update » ne s'applique qu'aux versions publiées)")
+	}
+	fmt.Println()
+	fmt.Println()
 
 	fmt.Println("Configuration :")
 	report("config", cfg.Validate())

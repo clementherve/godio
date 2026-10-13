@@ -19,5 +19,5 @@ func cmdRun() error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("%w\n\nLancez « godio setup » puis « godio doctor »", err)
 	}
-	return tray.Run(cfg)
+	return tray.Run(cfg, version)
 }
