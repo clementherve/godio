@@ -95,12 +95,17 @@ func TestResolve(t *testing.T) {
 		}
 	}
 
-	// "auto" and anything unrecognised both ask the system: a typo in
+	// "auto" and anything unrecognised both defer to the system: a typo in
 	// config.toml must not stop godio from starting.
-	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	//
+	// The assertion is against Detect() rather than a fixed language, because
+	// what the system answers is platform-specific — the environment on POSIX,
+	// the Windows UI language on Windows, where no environment variable would
+	// change it. Detection itself is covered by TestFromTag and, where it
+	// reads the environment, by TestDetectFromEnvironment.
 	for _, in := range []string{"auto", "", "français", "de"} {
-		if got := Resolve(in); got != FR {
-			t.Errorf("Resolve(%q) = %q, want the detected language", in, got)
+		if got, want := Resolve(in), Detect(); got != want {
+			t.Errorf("Resolve(%q) = %q, want the detected language %q", in, got, want)
 		}
 	}
 }
