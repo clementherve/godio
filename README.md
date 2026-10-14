@@ -5,6 +5,9 @@
     <a href="https://github.com/clementherve/godio/actions/workflows/ci.yml">
       <img src="https://github.com/clementherve/godio/actions/workflows/ci.yml/badge.svg" alt="CI">
     </a>
+    <a href="https://opensource.org/licenses/GNU">
+      <img src="https://img.shields.io/badge/License-GNU-yellow.svg" alt="CI">
+    </a>
   </p>
 </div>
 
