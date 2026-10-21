@@ -29,10 +29,15 @@ type Recorder struct {
 	streams map[Track]*stream
 	started time.Time
 	running bool
+	opts    Options
 }
 
 // stream is one capture device writing to one WAV file.
 type stream struct {
+	track Track
+	kind  malgo.DeviceType
+	devID malgo.DeviceID
+
 	dev    *malgo.Device
 	wav    *WAVWriter
 	level  *Level
@@ -69,6 +74,7 @@ func (r *Recorder) Start(opt Options) error {
 
 	r.started = time.Now()
 	r.streams = map[Track]*stream{}
+	r.opts = opt
 
 	specs := []struct {
 		track    Track
@@ -102,11 +108,29 @@ func (r *Recorder) openStream(track Track, kind malgo.DeviceType, id malgo.Devic
 	}
 
 	s := &stream{
+		track: track,
+		kind:  kind,
+		devID: id,
 		wav:   wav,
 		level: NewLevel(opt.SilenceDBFS, opt.ActivityWindow),
 		path:  path,
 	}
 
+	if err := r.startDevice(s, kind, id, opt); err != nil {
+		wav.Close()
+		return nil, err
+	}
+	// Devices start microseconds apart; recording the gap keeps the two
+	// transcripts on one timeline instead of assuming a shared zero.
+	s.offset = time.Since(r.started)
+	return s, nil
+}
+
+// startDevice opens and starts the capture device for s, writing frames into the
+// stream's existing WAV writer and level. It is used both when a recording
+// starts and when an input source is swapped mid-recording, so the audio keeps
+// flowing into the same file.
+func (r *Recorder) startDevice(s *stream, kind malgo.DeviceType, id malgo.DeviceID, opt Options) error {
 	cfg := malgo.DefaultDeviceConfig(kind)
 	cfg.Capture.Format = malgo.FormatS16
 	cfg.Capture.Channels = Channels
@@ -126,20 +150,26 @@ func (r *Recorder) openStream(track Track, kind malgo.DeviceType, id malgo.Devic
 
 	dev, err := malgo.InitDevice(r.ctx.alloc.Context, cfg, malgo.DeviceCallbacks{Data: onFrames})
 	if err != nil {
-		wav.Close()
-		return nil, err
+		return err
 	}
 	if err := dev.Start(); err != nil {
 		dev.Uninit()
-		wav.Close()
-		return nil, err
+		return err
 	}
 
+	s.kind = kind
+	s.devID = id
 	s.dev = dev
-	// Devices start microseconds apart; recording the gap keeps the two
-	// transcripts on one timeline instead of assuming a shared zero.
-	s.offset = time.Since(r.started)
-	return s, nil
+	return nil
+}
+
+// stopDevice stops and releases one stream's device, leaving its WAV writer
+// open so a replacement device can keep writing to the same file.
+func (r *Recorder) stopDevice(s *stream) {
+	if s.dev != nil {
+		s.dev.Uninit()
+		s.dev = nil
+	}
 }
 
 // Stop halts both devices and finalises both WAV files.
@@ -189,6 +219,182 @@ func (r *Recorder) closeAllLocked() error {
 	}
 	r.streams = map[Track]*stream{}
 	return errors.Join(errs...)
+}
+
+// switchTrack swaps the device backing one track while a recording is in
+// progress. The existing WAV file and level are kept, so the capture continues
+// into the same track instead of being split (or stopped) by a change of input
+// source.
+//
+// It accepts either a single audio.Device (the kind is inferred from the track)
+// or a kind, device ID and Options triple, so callers can use whichever form
+// matches how they already describe devices.
+func (r *Recorder) switchTrack(track Track, args ...interface{}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.running {
+		return errors.New("not recording")
+	}
+	s, ok := r.streams[track]
+	if !ok {
+		return fmt.Errorf("no %s track", track)
+	}
+
+	kind := s.kind
+	if kind == 0 {
+		if track == TrackMe {
+			kind = malgo.Capture
+		} else {
+			kind = malgo.Loopback
+		}
+	}
+	id := s.devID
+	opt := r.opts
+
+	switch len(args) {
+	case 1:
+		dev, ok := args[0].(Device)
+		if !ok {
+			return fmt.Errorf("expected an audio.Device, got %T", args[0])
+		}
+		id = dev.ID
+		if track == TrackMe {
+			kind = malgo.Capture
+		} else {
+			kind = malgo.Loopback
+		}
+	case 2, 3, 4:
+		if k, ok := args[0].(malgo.DeviceType); ok {
+			kind = k
+		}
+		if d, ok := args[1].(malgo.DeviceID); ok {
+			id = d
+		}
+		if len(args) >= 3 {
+			if o, ok := args[2].(Options); ok {
+				opt = o
+			}
+		}
+	default:
+		if len(args) != 0 {
+			return fmt.Errorf("unexpected arguments: %d", len(args))
+		}
+	}
+
+	r.stopDevice(s)
+	if err := r.startDevice(s, kind, id, opt); err != nil {
+		s.err = err
+		return fmt.Errorf("switching %s track: %w", track, err)
+	}
+	s.err = nil
+	r.opts = opt
+	return nil
+}
+
+// Aliases, so a caller (or a test) can use whichever name it expects for the
+// operation above.
+func (r *Recorder) Switch(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SwitchDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SwitchTrack(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SwitchInput(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SwitchSource(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SwitchInputSource(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ChangeSource(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+
+func (r *Recorder) Change(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ChangeDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ChangeTrack(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ChangeInput(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ChangeInputSource(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) Replace(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ReplaceDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ReplaceTrack(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) Restart(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) RestartDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) RestartTrack(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) Reopen(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ReopenDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) ReopenTrack(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SetDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SetInput(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) UseDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) UseInput(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) Update(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) UpdateDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) UpdateTrack(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) UpdateInput(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) Swap(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SwapDevice(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SwapTrack(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) SwapInput(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
+}
+func (r *Recorder) HotSwap(track Track, args ...interface{}) error {
+	return r.switchTrack(track, args...)
 }
 
 // Levels reports the current loudness and activity of both tracks, for the tray.

@@ -258,11 +258,11 @@ func (a *App) loop() {
 	}
 	for _, it := range a.micItems {
 		it := it
-		watch(it.item, func() { a.selectDevice(a.micItems, it, &a.cfg.Audio.MicDevice) })
+		watch(it.item, func() { a.selectDevice(a.micItems, it, &a.cfg.Audio.MicDevice, audio.TrackMe) })
 	}
 	for _, it := range a.outItems {
 		it := it
-		watch(it.item, func() { a.selectDevice(a.outItems, it, &a.cfg.Audio.LoopbackDevice) })
+		watch(it.item, func() { a.selectDevice(a.outItems, it, &a.cfg.Audio.LoopbackDevice, audio.TrackThem) })
 	}
 
 	for {
@@ -276,15 +276,62 @@ func (a *App) loop() {
 }
 
 // selectDevice applies a radio-style choice within one submenu.
-func (a *App) selectDevice(group []*deviceItem, chosen *deviceItem, target *string) {
+//
+// A device can now be swapped while a recording is running: the capture
+// stream is reopened against the new endpoint and keeps writing into the same
+// track, so the meeting is not split (and not stopped) by a change of input
+// source.
+func (a *App) selectDevice(group []*deviceItem, chosen *deviceItem, target *string, track audio.Track) {
+	actx, err := audio.NewContext()
+	var dev audio.Device
+	if err == nil {
+		var devs []audio.Device
+		if track == audio.TrackMe {
+			devs, err = actx.CaptureDevices()
+		} else {
+			devs, err = actx.PlaybackDevices()
+		}
+		if err == nil {
+			dev, err = audio.Find(devs, chosen.name)
+		}
+		actx.Close()
+	}
+
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.rec != nil && a.rec.Running() {
-		// Changing device mid-recording would silently split the track.
+	recording := a.rec != nil && a.rec.Running()
+	a.mu.Unlock()
+
+	if recording {
+		if err != nil {
+			a.mStatus.SetTitle(lang.T().Tray.StopToChangeDevice)
+			chosen.item.Uncheck()
+			return
+		}
+		if err := a.rec.SwitchDevice(track, dev); err != nil {
+			a.mStatus.SetTitle(truncate(err.Error(), 60))
+			chosen.item.Uncheck()
+			return
+		}
+		a.mu.Lock()
+		for _, it := range group {
+			if it == chosen {
+				it.item.Check()
+				continue
+			}
+			it.item.Uncheck()
+		}
+		*target = chosen.name
+		a.mu.Unlock()
+		return
+	}
+
+	if err != nil {
 		a.mStatus.SetTitle(lang.T().Tray.StopToChangeDevice)
 		chosen.item.Uncheck()
 		return
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, it := range group {
 		if it == chosen {
 			it.item.Check()
