@@ -29,6 +29,7 @@ type Config struct {
 	Language string   `toml:"language"`
 	Obsidian Obsidian `toml:"obsidian"`
 	Audio    Audio    `toml:"audio"`
+	Meetings Meetings `toml:"meetings"`
 	Whisper  Whisper  `toml:"whisper"`
 	Claude   Claude   `toml:"claude"`
 	Sessions Sessions `toml:"sessions"`
@@ -90,6 +91,21 @@ type Audio struct {
 	// AutoStopWarning is how long before AutoStop the user is warned, giving
 	// anyone still at the machine time to say something and cancel it.
 	AutoStopWarning Duration `toml:"auto_stop_warning"`
+}
+
+// Meetings configures automatic meeting detection.
+//
+// Detection watches the Windows microphone consent store rather than the audio
+// stream: it sees Teams, Zoom and browser calls alike, and costs one registry
+// read per second. It is off by default because starting a recording is a
+// privacy decision, not a side effect of launching a tray.
+type Meetings struct {
+	// Detect starts a recording when another application has held the
+	// microphone for Delay.
+	Detect bool `toml:"detect"`
+	// Delay is how long the microphone must be in continuous use before
+	// recording starts. It filters out alerts and one-off microphone tests.
+	Delay Duration `toml:"delay"`
 }
 
 // Whisper points at the whisper.cpp binary and its models, and tunes how hard
@@ -171,6 +187,10 @@ func Default() Config {
 			ActivityWindow:  Duration{10 * time.Second},
 			AutoStop:        Duration{5 * time.Minute},
 			AutoStopWarning: Duration{30 * time.Second},
+		},
+		Meetings: Meetings{
+			Detect: false,
+			Delay:  Duration{3 * time.Second},
 		},
 		Whisper: Whisper{
 			Exe:      filepath.Join("whisper", "whisper-cli"+exeSuffix()),
@@ -278,6 +298,10 @@ const headerFR = `# Configuration de godio.
 #   audio.auto_stop          arrêt après ce temps de silence des deux côtés
 #                            ("0s" = jamais)
 #   audio.auto_stop_warning  préavis avant cet arrêt ("0s" = aucun)
+#
+#   meetings.detect  démarrer quand une autre application utilise le micro
+#                    (false par défaut)
+#   meetings.delay   durée d'utilisation continue avant de démarrer ("3s")
 
 `
 
@@ -309,6 +333,10 @@ const headerEN = `# godio configuration.
 #   audio.auto_stop          stop after this much silence on both sides
 #                            ("0s" = never)
 #   audio.auto_stop_warning  warning given before that stop ("0s" = none)
+#
+#   meetings.detect  start when another application uses the microphone
+#                    (false by default)
+#   meetings.delay   how long it must be in continuous use first ("3s")
 
 `
 
@@ -397,6 +425,9 @@ func (c *Config) normalise() {
 	}
 	if c.Audio.AutoStopWarning.Duration < 0 {
 		c.Audio.AutoStopWarning = d.Audio.AutoStopWarning
+	}
+	if c.Meetings.Delay.Duration <= 0 {
+		c.Meetings.Delay = d.Meetings.Delay
 	}
 	if c.Whisper.Language == "" {
 		c.Whisper.Language = d.Whisper.Language

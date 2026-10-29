@@ -4,6 +4,7 @@ package tray
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/clementherve/godio/internal/config"
 	"github.com/clementherve/godio/internal/deps"
 	"github.com/clementherve/godio/internal/lang"
+	"github.com/clementherve/godio/internal/meeting"
 	"github.com/clementherve/godio/internal/notify"
 	"github.com/clementherve/godio/internal/pipeline"
 	"github.com/clementherve/godio/internal/proc"
@@ -51,6 +53,7 @@ type App struct {
 	mQuit   *systray.MenuItem
 
 	mVault   *systray.MenuItem
+	mDetect  *systray.MenuItem
 	mEdit    *systray.MenuItem
 	mReload  *systray.MenuItem
 	mSetup   *systray.MenuItem
@@ -105,6 +108,8 @@ func (a *App) onReady() {
 	cfgMenu := systray.AddMenuItem(lang.T().Tray.ConfigMenu, "")
 	a.mVault = cfgMenu.AddSubMenuItem(lang.T().Tray.PickVault, "")
 	a.buildStyleMenu(cfgMenu)
+	a.mDetect = cfgMenu.AddSubMenuItemCheckbox(lang.T().Tray.DetectMenu,
+		lang.T().Tray.DetectTooltip, a.cfg.Meetings.Detect)
 	a.mEdit = cfgMenu.AddSubMenuItem(lang.T().Tray.OpenConfig, "")
 	a.mReload = cfgMenu.AddSubMenuItem(lang.T().Tray.Reload, "")
 	a.mSetup = systray.AddMenuItem(lang.T().Tray.Setup, "")
@@ -123,6 +128,7 @@ func (a *App) onReady() {
 
 	go a.loop()
 	go a.checkUpdate()
+	go a.watchMeetings()
 }
 
 func (a *App) onExit() {
@@ -254,6 +260,7 @@ func (a *App) loop() {
 
 	watch(a.mToggle, a.toggle)
 	watch(a.mVault, a.chooseVault)
+	watch(a.mDetect, a.toggleDetect)
 	watch(a.mEdit, a.editConfig)
 	watch(a.mReload, a.reloadConfig)
 	watch(a.mSetup, func() { go a.runSetup() })
@@ -305,6 +312,131 @@ func (a *App) post(fn func()) {
 	case a.events <- fn:
 	default:
 		go func() { a.events <- fn }()
+	}
+}
+
+// busyLocked reports whether a recording or a processing run is in progress.
+// The caller must hold a.mu.
+func (a *App) busyLocked() bool {
+	return a.working || (a.rec != nil && a.rec.Running())
+}
+
+// busy reports whether a recording or a processing run is in progress.
+func (a *App) busy() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.busyLocked()
+}
+
+// detectSettings reads the meeting-detection settings under the lock, since
+// reloading the configuration can change them while the watcher runs.
+func (a *App) detectSettings() (bool, time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cfg.Meetings.Detect, a.cfg.Meetings.Delay.Duration
+}
+
+// toggleDetect flips automatic meeting detection and persists the choice.
+func (a *App) toggleDetect() {
+	a.mu.Lock()
+	a.cfg.Meetings.Detect = !a.cfg.Meetings.Detect
+	enabled := a.cfg.Meetings.Detect
+	cfg := a.cfg
+	a.mu.Unlock()
+
+	if enabled {
+		a.mDetect.Check()
+	} else {
+		a.mDetect.Uncheck()
+	}
+	if err := cfg.Save(); err != nil {
+		a.fail(err)
+		return
+	}
+	if enabled {
+		a.mStatus.SetTitle(lang.T().Tray.DetectOn)
+		return
+	}
+	a.mStatus.SetTitle(lang.T().Tray.DetectOff)
+}
+
+// watchMeetings starts a recording when another application has held the
+// microphone for the configured delay.
+//
+// latched keeps one meeting from starting a recording more than once. It is
+// set as soon as a detection is acted on, and cleared only when the microphone
+// is released, so stopping a recording manually in the middle of a call does
+// not immediately start another one.
+func (a *App) watchMeetings() {
+	detector, err := meeting.New()
+	if err != nil {
+		log.Printf("meeting detection disabled: %v", err)
+		return
+	}
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	var since time.Time
+	var latched bool
+	var loggedErr string
+	for range ticker.C {
+		detect, delay := a.detectSettings()
+		if !detect {
+			since, latched, loggedErr = time.Time{}, false, ""
+			continue
+		}
+
+		inUse, err := detector.InUse()
+		if err != nil {
+			if msg := err.Error(); msg != loggedErr {
+				log.Printf("meeting detection: %v", err)
+				loggedErr = msg
+			}
+			since, latched = time.Time{}, false
+			continue
+		}
+		loggedErr = ""
+
+		if !inUse {
+			since, latched = time.Time{}, false
+			continue
+		}
+		if latched {
+			continue
+		}
+		if a.busy() {
+			// A recording or a processing run already owns the tray. Do not
+			// auto-start when it ends: the microphone is still held, so the
+			// meeting the user stopped is probably the same one.
+			latched = true
+			continue
+		}
+		if since.IsZero() {
+			since = time.Now()
+			continue
+		}
+		if time.Since(since) >= delay {
+			latched = true
+			a.post(a.startDetected)
+		}
+	}
+}
+
+// startDetected starts a recording for a detected meeting, on the tray loop.
+// It only notifies when the start actually succeeded.
+func (a *App) startDetected() {
+	if a.busy() {
+		return
+	}
+	a.start()
+
+	a.mu.Lock()
+	running := a.rec != nil && a.rec.Running()
+	a.mu.Unlock()
+	if running {
+		log.Printf("meeting detected; recording started")
+		a.notifier.Done(lang.T().Tray.DetectedTitle, lang.T().Tray.DetectedBody)
 	}
 }
 
@@ -392,6 +524,10 @@ func (a *App) toggle() {
 
 func (a *App) start() {
 	a.mu.Lock()
+	if a.busyLocked() {
+		a.mu.Unlock()
+		return
+	}
 	cfg := a.cfg
 	a.mu.Unlock()
 
@@ -728,6 +864,11 @@ func (a *App) reloadConfig() {
 	a.cfg = cfg
 	// The style *is* read from the file, so the ticks have to follow it.
 	a.markStyleLocked()
+	if cfg.Meetings.Detect {
+		a.mDetect.Check()
+	} else {
+		a.mDetect.Uncheck()
+	}
 	a.mu.Unlock()
 
 	lang.Use(lang.Resolve(cfg.Language))
@@ -753,6 +894,7 @@ func (a *App) relabel() {
 	}{
 		{a.mToggle, toggle},
 		{a.mVault, lang.T().Tray.PickVault},
+		{a.mDetect, lang.T().Tray.DetectMenu},
 		{a.mEdit, lang.T().Tray.OpenConfig},
 		{a.mReload, lang.T().Tray.Reload},
 		{a.mSetup, lang.T().Tray.Setup},

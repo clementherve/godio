@@ -103,6 +103,12 @@ type TrayStrings struct {
 	OpenConfig             string
 	Reload                 string
 	Reloaded               string
+	DetectMenu             string
+	DetectTooltip          string
+	DetectOn               string
+	DetectOff              string
+	DetectedTitle          string
+	DetectedBody           string
 	StyleMenu              string
 	StyleTooltip           string
 	StylePrefix            string
