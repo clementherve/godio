@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/clementherve/godio/internal/proc"
 	"github.com/clementherve/godio/internal/transcript"
 )
 
@@ -77,6 +78,7 @@ func (r Runner) Transcribe(ctx context.Context, wavPath string) ([]transcript.Se
 	}
 
 	cmd := exec.CommandContext(ctx, r.Exe, args...)
+	proc.HideConsole(cmd)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, err

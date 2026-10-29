@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/clementherve/godio/internal/proc"
 )
 
 // Runner invokes the claude CLI in print mode.
@@ -51,6 +53,7 @@ func (r Runner) Extract(ctx context.Context, prompt, transcript string) (string,
 	}
 
 	cmd := exec.CommandContext(ctx, r.Executable, args...)
+	proc.HideConsole(cmd)
 	cmd.Stdin = strings.NewReader(transcript)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/clementherve/godio/internal/lang"
+	"github.com/clementherve/godio/internal/proc"
 )
 
 // GPU describes the NVIDIA GPU found on this machine, if any.
@@ -47,6 +48,7 @@ func DetectGPU() GPU {
 	// nvidia-smi can hang on a wedged driver; it is not worth blocking setup.
 	done := make(chan []byte, 1)
 	cmd := exec.Command(exe, "--query-gpu=name,driver_version", "--format=csv,noheader")
+	proc.HideConsole(cmd)
 	go func() {
 		out, err := cmd.Output()
 		if err != nil {
