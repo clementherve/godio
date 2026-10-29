@@ -20,6 +20,7 @@ import (
 	"github.com/clementherve/godio/internal/lang"
 	"github.com/clementherve/godio/internal/notify"
 	"github.com/clementherve/godio/internal/pipeline"
+	"github.com/clementherve/godio/internal/proc"
 	"github.com/clementherve/godio/internal/selfupdate"
 	"github.com/clementherve/godio/internal/winui"
 )
@@ -35,6 +36,10 @@ type App struct {
 	rec     *audio.Recorder
 	sess    *pipeline.Session
 	working bool
+	// events carries every systray call made outside the tray loop. Menu items
+	// are plain structs inside systray, not thread-safe, and updating a visible
+	// Windows menu from another goroutine can crash the process.
+	events chan func()
 	// autoWarned keeps the silence warning to one notification per recording,
 	// instead of one every 500 ms for the whole countdown.
 	autoWarned bool
@@ -74,7 +79,13 @@ type styleItem struct {
 
 // Run starts the tray and blocks until the user quits.
 func Run(cfg config.Config, version string) error {
-	a := &App{cfg: cfg, version: version, lastState: -1, notifier: notify.New()}
+	a := &App{
+		cfg:       cfg,
+		version:   version,
+		lastState: -1,
+		notifier:  notify.New(),
+		events:    make(chan func(), 64),
+	}
 	systray.Run(a.onReady, a.onExit)
 	return nil
 }
@@ -248,7 +259,12 @@ func (a *App) loop() {
 	watch(a.mSetup, func() { go a.runSetup() })
 	watch(a.mUpdate, func() { go a.runUpdate() })
 	watch(a.mRestart, a.restart)
-	watch(a.mNote, func() { open(a.cfg.DailyNotePath(time.Now())) })
+	watch(a.mNote, func() {
+		a.mu.Lock()
+		cfg := a.cfg
+		a.mu.Unlock()
+		open(cfg.DailyNotePath(time.Now()))
+	})
 	watch(a.mFolder, a.openSessionFolder)
 	watch(a.mQuit, func() { systray.Quit() })
 
@@ -267,11 +283,28 @@ func (a *App) loop() {
 
 	for {
 		select {
+		case fn := <-a.events:
+			fn()
 		case fn := <-clicks:
 			fn()
 		case <-ticker.C:
 			a.refresh()
 		}
+	}
+}
+
+// post runs fn on the tray loop. Every systray call outside onReady and loop
+// must go through it: systray's MenuItem fields are unsynchronised, and
+// SetMenuItemInfo on a menu that TrackPopupMenu is displaying can crash.
+//
+// The fallback goroutine matters because post is also called from the loop
+// itself (through fail and updateFailed). Blocking there when the queue is full
+// would deadlock the only goroutine able to drain it.
+func (a *App) post(fn func()) {
+	select {
+	case a.events <- fn:
+	default:
+		go func() { a.events <- fn }()
 	}
 }
 
@@ -358,6 +391,10 @@ func (a *App) toggle() {
 }
 
 func (a *App) start() {
+	a.mu.Lock()
+	cfg := a.cfg
+	a.mu.Unlock()
+
 	actx, err := audio.NewContext()
 	if err != nil {
 		a.fail(err)
@@ -370,7 +407,7 @@ func (a *App) start() {
 		a.fail(err)
 		return
 	}
-	mic, err := audio.Find(capture, a.cfg.Audio.MicDevice)
+	mic, err := audio.Find(capture, cfg.Audio.MicDevice)
 	if err != nil {
 		actx.Close()
 		a.fail(fmt.Errorf(lang.T().Err.MicFmt, err))
@@ -382,7 +419,7 @@ func (a *App) start() {
 		a.fail(err)
 		return
 	}
-	out, err := audio.Find(playback, a.cfg.Audio.LoopbackDevice)
+	out, err := audio.Find(playback, cfg.Audio.LoopbackDevice)
 	if err != nil {
 		actx.Close()
 		a.fail(fmt.Errorf(lang.T().Err.OutputFmt, err))
@@ -407,8 +444,8 @@ func (a *App) start() {
 	err = rec.Start(audio.Options{
 		MicDevice:      mic,
 		PlaybackDevice: out,
-		SilenceDBFS:    a.cfg.Audio.SilenceDBFS,
-		ActivityWindow: a.cfg.Audio.ActivityWindow.Duration,
+		SilenceDBFS:    cfg.Audio.SilenceDBFS,
+		ActivityWindow: cfg.Audio.ActivityWindow.Duration,
 	})
 	if err != nil {
 		actx.Close()
@@ -427,7 +464,7 @@ func (a *App) start() {
 
 func (a *App) stop() {
 	a.mu.Lock()
-	rec, actx, sess := a.rec, a.actx, a.sess
+	rec, actx, sess, cfg := a.rec, a.actx, a.sess, a.cfg
 	a.rec, a.actx = nil, nil
 	a.working = true
 	a.mu.Unlock()
@@ -449,18 +486,23 @@ func (a *App) stop() {
 	}
 
 	// Processing runs off the event loop so the menu stays responsive while
-	// Whisper works through what may be an hour of audio.
+	// Whisper works through what may be an hour of audio. Its callbacks post
+	// back to the loop instead of touching systray from this goroutine.
 	go func() {
 		p := pipeline.Pipeline{
-			Cfg: a.cfg,
-			Log: func(s string) { a.mStatus.SetTitle(s) },
+			Cfg: cfg,
+			Log: func(s string) {
+				a.post(func() { a.mStatus.SetTitle(s) })
+			},
 			OnProgress: func(stage string, pc int) {
-				a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, pc))
-				systray.SetTooltip(fmt.Sprintf(lang.T().Tray.TooltipProgressFmt, stage, pc))
+				a.post(func() {
+					a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, pc))
+					systray.SetTooltip(fmt.Sprintf(lang.T().Tray.TooltipProgressFmt, stage, pc))
+				})
 			},
 		}
 		res, err := p.Process(context.Background(), sess)
-		a.finish(res, err)
+		a.post(func() { a.finish(res, err) })
 	}()
 }
 
@@ -491,7 +533,9 @@ func (a *App) finish(res pipeline.Result, err error) {
 	a.notifier.Done(lang.T().Tray.ProcessedTitle,
 		fmt.Sprintf(lang.T().Tray.ProcessedBodyFmt, summary, res.Elapsed.Round(time.Second)))
 
-	a.purge()
+	// Retention walks the session directory and may delete gigabytes; it must
+	// not freeze the menu, and it only ever reports through the loop.
+	go a.purge()
 }
 
 // purge applies the retention policy, once a meeting has been processed.
@@ -519,20 +563,25 @@ func (a *App) purge() {
 	if err != nil {
 		// A failed purge must never look like a failed meeting: the notes are
 		// already in the vault by this point.
-		a.mStatus.SetTitle(lang.T().Tray.PurgeErrPrefix + truncate(err.Error(), 50))
+		msg := lang.T().Tray.PurgeErrPrefix + truncate(err.Error(), 50)
+		a.post(func() { a.mStatus.SetTitle(msg) })
 		return
 	}
 	if res.Empty() {
 		return
 	}
-	a.mStatus.SetTitle(fmt.Sprintf(lang.T().Tray.PurgeDoneFmt,
-		len(res.Audio)+len(res.Sessions), float64(res.Bytes)/(1<<20)))
+	msg := fmt.Sprintf(lang.T().Tray.PurgeDoneFmt,
+		len(res.Audio)+len(res.Sessions), float64(res.Bytes)/(1<<20))
+	a.post(func() { a.mStatus.SetTitle(msg) })
 }
 
 func (a *App) fail(err error) {
-	a.setIcon(assets.IconError)
-	a.mStatus.SetTitle(truncate(err.Error(), 60))
-	systray.SetTooltip(lang.T().Tray.TooltipPrefix + truncate(err.Error(), 100))
+	msg := err.Error()
+	a.post(func() {
+		a.setIcon(assets.IconError)
+		a.mStatus.SetTitle(truncate(msg, 60))
+		systray.SetTooltip(lang.T().Tray.TooltipPrefix + truncate(msg, 100))
+	})
 }
 
 // refresh updates the icon and tooltip from the live levels.
@@ -650,7 +699,8 @@ func (a *App) chooseVault() {
 			a.fail(err)
 			return
 		}
-		a.mStatus.SetTitle(lang.T().Tray.VaultPrefix + filepath.Base(path))
+		msg := lang.T().Tray.VaultPrefix + filepath.Base(path)
+		a.post(func() { a.mStatus.SetTitle(msg) })
 	}()
 }
 
@@ -735,19 +785,21 @@ func (a *App) runSetup() {
 	a.mu.Unlock()
 
 	if busy {
-		a.mStatus.SetTitle(lang.T().Tray.Busy)
+		a.post(func() { a.mStatus.SetTitle(lang.T().Tray.Busy) })
 		return
 	}
 	defer func() {
 		a.mu.Lock()
 		a.working = false
 		a.mu.Unlock()
-		a.mSetup.Enable()
+		a.post(func() { a.mSetup.Enable() })
 	}()
 
-	a.mSetup.Disable()
-	a.setIcon(assets.IconProcessing)
-	a.mStatus.SetTitle(lang.T().Tray.LookingForDeps)
+	a.post(func() {
+		a.mSetup.Disable()
+		a.setIcon(assets.IconProcessing)
+		a.mStatus.SetTitle(lang.T().Tray.LookingForDeps)
+	})
 
 	ctx := context.Background()
 	dir := filepath.Dir(cfg.Resolve(cfg.Whisper.Exe))
@@ -760,17 +812,20 @@ func (a *App) runSetup() {
 		return
 	}
 	if !plan.NeedsDownload() {
-		a.setIcon(assets.IconIdle)
-		a.mStatus.SetTitle(lang.T().Tray.DepsAlreadyPrefix + string(plan.Backend) + ")")
+		msg := lang.T().Tray.DepsAlreadyPrefix + string(plan.Backend) + ")"
+		a.post(func() {
+			a.setIcon(assets.IconIdle)
+			a.mStatus.SetTitle(msg)
+		})
 		return
 	}
 
 	err = deps.Install(ctx, root, plan, func(stage string, done, total int64) {
+		msg := fmt.Sprintf(lang.T().Tray.ProgressMBFmt, stage, done/(1<<20))
 		if total > 0 {
-			a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, done*100/total))
-			return
+			msg = fmt.Sprintf("%s %d%%", stage, done*100/total)
 		}
-		a.mStatus.SetTitle(fmt.Sprintf(lang.T().Tray.ProgressMBFmt, stage, done/(1<<20)))
+		a.post(func() { a.mStatus.SetTitle(msg) })
 	})
 	if err != nil {
 		a.fail(err)
@@ -787,8 +842,11 @@ func (a *App) runSetup() {
 	a.mu.Unlock()
 	_ = saved.Save()
 
-	a.setIcon(assets.IconIdle)
-	a.mStatus.SetTitle(lang.T().Tray.DepsInstalledPrefix + string(plan.Backend) + ")")
+	msg := lang.T().Tray.DepsInstalledPrefix + string(plan.Backend) + ")"
+	a.post(func() {
+		a.setIcon(assets.IconIdle)
+		a.mStatus.SetTitle(msg)
+	})
 	a.notifier.Done(lang.T().Tray.DepsDoneTitle,
 		lang.T().Tray.DepsDoneBody1+plan.Release+" ("+string(plan.Backend)+lang.T().Tray.DepsDoneBody2)
 }
@@ -817,8 +875,12 @@ func (a *App) checkUpdate() {
 		return
 	}
 
-	a.mUpdate.SetTitle(lang.T().Tray.UpdatePrefix + avail.Latest + ")")
-	a.mStatus.SetTitle(lang.T().Tray.VersionPrefix + avail.Latest + lang.T().Tray.AvailableSuffix)
+	updateTitle := lang.T().Tray.UpdatePrefix + avail.Latest + ")"
+	status := lang.T().Tray.VersionPrefix + avail.Latest + lang.T().Tray.AvailableSuffix
+	a.post(func() {
+		a.mUpdate.SetTitle(updateTitle)
+		a.mStatus.SetTitle(status)
+	})
 	a.notifier.Done(lang.T().Tray.UpdateAvailableTitle,
 		fmt.Sprintf(lang.T().Tray.UpdateAvailableBodyFmt,
 			version, avail.Latest, avail.HumanSize()))
@@ -836,19 +898,21 @@ func (a *App) runUpdate() {
 
 	if busy {
 		// Swapping the binaries mid-meeting would be the worst possible moment.
-		a.mStatus.SetTitle(lang.T().Tray.Busy)
+		a.post(func() { a.mStatus.SetTitle(lang.T().Tray.Busy) })
 		return
 	}
 	defer func() {
 		a.mu.Lock()
 		a.working = false
 		a.mu.Unlock()
-		a.mUpdate.Enable()
+		a.post(func() { a.mUpdate.Enable() })
 	}()
 
-	a.mUpdate.Disable()
-	a.setIcon(assets.IconProcessing)
-	a.mStatus.SetTitle(lang.T().Tray.LookingForUpdate)
+	a.post(func() {
+		a.mUpdate.Disable()
+		a.setIcon(assets.IconProcessing)
+		a.mStatus.SetTitle(lang.T().Tray.LookingForUpdate)
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -859,8 +923,11 @@ func (a *App) runUpdate() {
 		return
 	}
 	if !avail.Newer {
-		a.setIcon(assets.IconIdle)
-		a.mStatus.SetTitle(lang.T().Tray.UpToDatePrefix + version + ")")
+		msg := lang.T().Tray.UpToDatePrefix + version + ")"
+		a.post(func() {
+			a.setIcon(assets.IconIdle)
+			a.mStatus.SetTitle(msg)
+		})
 		return
 	}
 
@@ -872,11 +939,11 @@ func (a *App) runUpdate() {
 	selfupdate.CleanupOld(dir)
 
 	applied, err := selfupdate.Apply(ctx, avail, dir, func(stage string, done, total int64) {
+		msg := fmt.Sprintf(lang.T().Tray.ProgressMBFmt, stage, done/(1<<20))
 		if total > 0 {
-			a.mStatus.SetTitle(fmt.Sprintf("%s %d%%", stage, done*100/total))
-			return
+			msg = fmt.Sprintf("%s %d%%", stage, done*100/total)
 		}
-		a.mStatus.SetTitle(fmt.Sprintf(lang.T().Tray.ProgressMBFmt, stage, done/(1<<20)))
+		a.post(func() { a.mStatus.SetTitle(msg) })
 	})
 	if err != nil {
 		a.updateFailed(err)
@@ -884,10 +951,14 @@ func (a *App) runUpdate() {
 	}
 
 	// The running process is still the old code, whatever the files now say.
-	a.setIcon(assets.IconIdle)
-	a.mUpdate.SetTitle(lang.T().Tray.GodioPrefix + applied.To + lang.T().Tray.InstalledSuffix)
-	a.mStatus.SetTitle(lang.T().Tray.RestartToUsePrefix + applied.To)
-	a.mRestart.Show()
+	updateTitle := lang.T().Tray.GodioPrefix + applied.To + lang.T().Tray.InstalledSuffix
+	status := lang.T().Tray.RestartToUsePrefix + applied.To
+	a.post(func() {
+		a.setIcon(assets.IconIdle)
+		a.mUpdate.SetTitle(updateTitle)
+		a.mStatus.SetTitle(status)
+		a.mRestart.Show()
+	})
 	a.notifier.Done(lang.T().Tray.UpdateDoneTitle,
 		fmt.Sprintf(lang.T().Tray.UpdateDoneBodyFmt, applied.From, applied.To))
 }
@@ -895,8 +966,11 @@ func (a *App) runUpdate() {
 // updateFailed reports an update error without dressing it up as a failed
 // meeting: nothing was recorded, and nothing was lost.
 func (a *App) updateFailed(err error) {
-	a.setIcon(assets.IconIdle)
-	a.mStatus.SetTitle(lang.T().Tray.UpdateErrPrefix + truncate(err.Error(), 60))
+	msg := lang.T().Tray.UpdateErrPrefix + truncate(err.Error(), 60)
+	a.post(func() {
+		a.setIcon(assets.IconIdle)
+		a.mStatus.SetTitle(msg)
+	})
 	a.notifier.Failed(truncate(err.Error(), 200))
 }
 
@@ -956,6 +1030,7 @@ func open(path string) {
 	default:
 		cmd = exec.Command("xdg-open", path)
 	}
+	proc.HideConsole(cmd)
 	_ = cmd.Start()
 }
 

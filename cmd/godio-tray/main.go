@@ -9,7 +9,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
+	"runtime/debug"
 
 	"github.com/clementherve/godio/internal/claudecli"
 	"github.com/clementherve/godio/internal/config"
@@ -25,6 +28,13 @@ import (
 var version = "dev"
 
 func main() {
+	// A GUI-subsystem binary has no usable stderr: a panic or a systray error
+	// would vanish with no trace. Keep both in a file next to the sessions.
+	if f := setupLog(); f != nil {
+		defer f.Close()
+		log.Printf("godio-tray %s starting", version)
+	}
+
 	if err := run(); err != nil {
 		// There is no console to print to in the GUI subsystem, so a failure
 		// that stops the tray from starting has to surface as a notification.
@@ -32,6 +42,30 @@ func main() {
 		fmt.Fprintln(os.Stderr, lang.T().CLI.ErrorPrefix, err)
 		os.Exit(1)
 	}
+}
+
+// setupLog points the standard logger and Go's crash handler at a file, so a
+// crash in the tray leaves something to diagnose. It returns nil when the file
+// cannot be opened; logging is not important enough to stop the tray.
+func setupLog() *os.File {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return nil
+	}
+	dir = filepath.Join(dir, "godio")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "tray.log"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil
+	}
+	log.SetOutput(f)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	// SetCrashOutput duplicates the descriptor, so closing f at exit is safe.
+	_ = debug.SetCrashOutput(f, debug.CrashOptions{})
+	return f
 }
 
 func run() error {
