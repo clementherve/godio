@@ -360,13 +360,12 @@ func (a *App) toggleDetect() {
 	a.mStatus.SetTitle(lang.T().Tray.DetectOff)
 }
 
-// watchMeetings starts a recording when another application has held the
-// microphone for the configured delay.
+// watchMeetings asks whether to start a recording when another application
+// has held the microphone for the configured delay.
 //
-// latched keeps one meeting from starting a recording more than once. It is
-// set as soon as a detection is acted on, and cleared only when the microphone
-// is released, so stopping a recording manually in the middle of a call does
-// not immediately start another one.
+// latched keeps one meeting from prompting more than once. It is set as soon
+// as a detection is acted on, and cleared only when the microphone is
+// released, so dismissing the notification does not bring it straight back.
 func (a *App) watchMeetings() {
 	detector, err := meeting.New()
 	if err != nil {
@@ -418,26 +417,34 @@ func (a *App) watchMeetings() {
 		}
 		if time.Since(since) >= delay {
 			latched = true
-			a.post(a.startDetected)
+			a.post(a.askDetected)
 		}
 	}
 }
 
-// startDetected starts a recording for a detected meeting, on the tray loop.
-// It only notifies when the start actually succeeded.
+// askDetected prompts for a detected meeting, on the tray loop. Starting is
+// deliberately left to the notification action: detection is a guess, and a
+// false positive should not capture a recording the user never asked for.
+func (a *App) askDetected() {
+	if a.busy() {
+		return
+	}
+	log.Printf("meeting detected; asking to start recording")
+	a.notifier.Ask(
+		lang.T().Tray.DetectedTitle,
+		lang.T().Tray.DetectedBody,
+		lang.T().Tray.DetectedStart,
+		lang.T().Tray.DetectedDismiss,
+		func() { a.post(a.startDetected) },
+	)
+}
+
+// startDetected starts a recording accepted from the detection notification.
 func (a *App) startDetected() {
 	if a.busy() {
 		return
 	}
 	a.start()
-
-	a.mu.Lock()
-	running := a.rec != nil && a.rec.Running()
-	a.mu.Unlock()
-	if running {
-		log.Printf("meeting detected; recording started")
-		a.notifier.Done(lang.T().Tray.DetectedTitle, lang.T().Tray.DetectedBody)
-	}
 }
 
 // selectDevice applies a radio-style choice within one submenu.

@@ -109,6 +109,8 @@ type TrayStrings struct {
 	DetectOff              string
 	DetectedTitle          string
 	DetectedBody           string
+	DetectedStart          string
+	DetectedDismiss        string
 	StyleMenu              string
 	StyleTooltip           string
 	StylePrefix            string

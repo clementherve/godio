@@ -24,3 +24,9 @@ func (n Notifier) Done(title, body string) {
 func (n Notifier) Failed(body string) {
 	n.push(lang.T().Tray.FailedTitle, body)
 }
+
+// Ask shows a notification with an accept and a decline button, and calls
+// onAccept when the accept button is clicked.
+func (n Notifier) Ask(title, body, accept, decline string, onAccept func()) {
+	n.ask(title, body, accept, decline, onAccept)
+}
